@@ -34,7 +34,7 @@ use crate::ffi::{Out, QuinnError};
 #[no_mangle]
 pub extern "cdecl" fn create_endpoint(
     handle: RustlsServerConfigHandle,
-    mut endpoint_id: u8,
+    mut endpoint_id: Out<u8>,
     mut endpoint_handle: Out<EndpointHandle>,
 ) -> QuinnResult {
     let endpoint_config = Arc::new(EndpointConfig::default());
@@ -42,9 +42,10 @@ pub extern "cdecl" fn create_endpoint(
 
     let proto_endpoint = Endpoint::new(endpoint_config, Some(Arc::from(server_config)));
     let endpoint = EndpointInner::new(proto_endpoint);
-    endpoint_id = endpoint.id;
-
-    unsafe { endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint))) };
+    unsafe {
+        endpoint_id.init(endpoint.id);
+        endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint)))
+    }
 
     QuinnResult::ok()
 }

@@ -50,8 +50,25 @@ impl ConnectionInner {
         }
 
         self.handle_app_events();
+        self.handle_connection_events();
 
         Ok(())
+    }
+
+    fn handle_connection_events(&mut self) {
+        if let Ok(event) = self.connection_events.try_recv() {
+            match event {
+                ConnectionEvent::Close { .. } => {
+                    // close
+                }
+                ConnectionEvent::Proto(proto) => {
+                   self.inner.handle_event(proto);
+                }
+                ConnectionEvent::Ping => {
+                    // ping
+                }
+            }
+        }
     }
 
     fn handle_app_events(&mut self) {

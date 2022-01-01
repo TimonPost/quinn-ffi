@@ -37,8 +37,8 @@ pub extern "cdecl" fn default_server_config(
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
-        .with_client_cert_verifier(rustls::server::AllowAnyAuthenticatedClient::new(
-            rustls::RootCertStore::empty(),
+        .with_client_cert_verifier(rustls::server::NoClientAuth::new(
+
         ))
         .with_single_cert(vec![rustls::Certificate(cert)], PrivateKey(key))
         .unwrap();
@@ -49,3 +49,5 @@ pub extern "cdecl" fn default_server_config(
 
     QuinnResult::ok()
 }
+
+
