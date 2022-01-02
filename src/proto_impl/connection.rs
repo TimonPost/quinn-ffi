@@ -87,7 +87,7 @@ impl ConnectionInner {
                     callbacks::on_connection_lost(self.connection_id())
                 }
                 Stream(StreamEvent::Writable { id }) => {
-                    callbacks::on_stream_writable(self.connection_id(), id.index())
+                    callbacks::on_stream_writable(self.connection_id(), id)
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     callbacks::on_stream_opened(self.connection_id(), Dir::Uni);
@@ -99,16 +99,16 @@ impl ConnectionInner {
                     callbacks::on_datagram_received(self.connection_id());
                 }
                 Stream(StreamEvent::Readable { id }) => {
-                    callbacks::on_stream_readable(self.connection_id(), id.index());
+                    callbacks::on_stream_readable(self.connection_id(), id);
                 }
                 Stream(StreamEvent::Available { dir }) => {
                     callbacks::on_stream_available(self.connection_id(), dir);
                 }
                 Stream(StreamEvent::Finished { id }) => {
-                    callbacks::on_stream_finished(self.connection_id(), id.index());
+                    callbacks::on_stream_finished(self.connection_id(), id);
                 }
                 Stream(StreamEvent::Stopped { id, error_code: _ }) => {
-                    callbacks::on_stream_stopped(self.connection_id(), id.index());
+                    callbacks::on_stream_stopped(self.connection_id(), id);
                 }
             }
         }

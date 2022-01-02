@@ -17,7 +17,7 @@ use crate::{
     EndpointHandle,
     RustlsServerConfigHandle,
 };
-use bytes::BytesMut;
+use bytes::{BytesMut, Bytes};
 use libc::size_t;
 use std::{
     sync::{
@@ -28,6 +28,8 @@ use std::{
 };
 use Into;
 use crate::ffi::{Out, QuinnError};
+use crate::proto::{StreamId, RecvStream, Dir};
+use std::io::Write;
 
 /// ===== Endpoint API'S ======
 
@@ -142,6 +144,63 @@ pub extern "cdecl" fn last_error(
     })
 }
 
+
+/// ===== Stream API'S ======
+
+#[no_mangle]
+pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_direction: u8, mut stream_id_out: Out<u64>) -> QuinnResult {
+
+    let dir = if stream_direction == 0 {Dir::Bi} else {Dir::Uni};
+
+    if let Some(stream_id) = handle.inner.streams().accept(dir) {
+        unsafe {stream_id_out.init(stream_id.index());}
+        QuinnResult::ok()
+    } else {
+        QuinnResult::err().context(QuinnError::new(0, "No stream to accept!".to_string()))
+    }
+}
+
+
+#[no_mangle]
+pub extern "cdecl" fn read_stream(mut handle: ConnectionHandle, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> QuinnResult {
+    let mut stream = handle.inner.recv_stream(StreamId(stream_id));
+
+    let read_result = stream.read(true);
+
+    match read_result {
+        Ok(mut chunks) => {
+            let result = match chunks.next(message_buf_len) {
+                Ok(Some(chunk)) => {
+                    unsafe {
+                        let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+
+                        let written = buffer.write(&chunk.bytes);
+                        if let Err(written) = written {
+                             return QuinnResult::err().context(QuinnError::new(0, written.to_string()))
+                        } else {
+                            actual_message_len.init(written.unwrap());
+                        }
+                    }
+                    QuinnResult::ok()
+                }
+                Err(e) => {
+                    QuinnResult::err().context(QuinnError::new(0, e.to_string()))
+                },
+                _=> QuinnResult::ok()
+            };
+
+            if chunks.finalize().should_transmit() {
+                println!("should transmit")
+            }
+
+            result
+        }
+        Err(e) => {
+            return QuinnResult::err().context(QuinnError::new(0, e.to_string()));
+        }
+    }
+}
+
 pub mod callbacks {
     use crate::{
         proto::{
@@ -154,19 +213,21 @@ pub mod callbacks {
         },
     };
     use libc::size_t;
+    use crate::proto::StreamId;
 
     // Callbacks should be initialized before applications runs. Therefore we can unwrap unchecked and allow statics to be mutable.
     static mut ON_NEW_CONNECTION: Option<extern "C" fn(super::ConnectionHandle, u32)> = None;
     static mut ON_CONNECTED: Option<extern "C" fn(u32)> = None;
     static mut ON_CONNECTION_LOST: Option<extern "C" fn(u32)> = None;
-    static mut ON_STREAM_WRITABLE: Option<extern "C" fn(u32, u64)> = None;
-    static mut ON_STREAM_READABLE: Option<extern "C" fn(u32, u64)> = None;
-    static mut ON_STREAM_FINISHED: Option<extern "C" fn(u32, u64)> = None;
-    static mut ON_STREAM_STOPPED: Option<extern "C" fn(u32, u64)> = None;
+    static mut ON_STREAM_WRITABLE: Option<extern "C" fn(u32, u64, u8)> = None;
+    static mut ON_STREAM_READABLE: Option<extern "C" fn(u32, u64, u8)> = None;
+    static mut ON_STREAM_FINISHED: Option<extern "C" fn(u32, u64, u8)> = None;
+    static mut ON_STREAM_STOPPED: Option<extern "C" fn(u32, u64, u8)> = None;
     static mut ON_STREAM_AVAILABLE: Option<extern "C" fn(u32, u8)> = None;
     static mut ON_DATAGRAM_RECEIVED: Option<extern "C" fn(u32)> = None;
     static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u8)> = None;
     static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
+
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
         println!("rust; on_new_connection");
@@ -189,31 +250,31 @@ pub mod callbacks {
         }
     }
 
-    pub(crate) fn on_stream_readable(con: u32, stream_id: u64) {
+    pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
         println!("rust; on_stream_readable");
         unsafe {
-            ON_STREAM_READABLE.unwrap_unchecked()(con, stream_id);
+            ON_STREAM_READABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
-    pub(crate) fn on_stream_writable(con: u32, stream_id: u64) {
+    pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
         println!("rust; on_stream_writable");
         unsafe {
-            ON_STREAM_WRITABLE.unwrap_unchecked()(con, stream_id);
+            ON_STREAM_WRITABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
-    pub(crate) fn on_stream_finished(con: u32, stream_id: u64) {
+    pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
         println!("rust; on_stream_finished");
         unsafe {
-            ON_STREAM_FINISHED.unwrap_unchecked()(con, stream_id);
+            ON_STREAM_FINISHED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
-    pub(crate) fn on_stream_stopped(con: u32, stream_id: u64) {
+    pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
         println!("rust; on_stream_stopped");
         unsafe {
-            ON_STREAM_STOPPED.unwrap_unchecked()(con, stream_id);
+            ON_STREAM_STOPPED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
@@ -273,28 +334,28 @@ pub mod callbacks {
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_writable(cb: extern "C" fn(u32, u64)) {
+    pub extern "cdecl" fn set_on_stream_writable(cb: extern "C" fn(u32, u64, u8)) {
         unsafe {
             ON_STREAM_WRITABLE = Some(cb);
         }
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_readable(cb: extern "C" fn(u32, u64)) {
+    pub extern "cdecl" fn set_on_stream_readable(cb: extern "C" fn(u32, u64, u8)) {
         unsafe {
             ON_STREAM_READABLE = Some(cb);
         }
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_finished(cb: extern "C" fn(u32, u64)) {
+    pub extern "cdecl" fn set_on_stream_finished(cb: extern "C" fn(u32, u64, u8)) {
         unsafe {
             ON_STREAM_FINISHED = Some(cb);
         }
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_stopped(cb: extern "C" fn(u32, u64)) {
+    pub extern "cdecl" fn set_on_stream_stopped(cb: extern "C" fn(u32, u64, u8)) {
         unsafe {
             ON_STREAM_STOPPED = Some(cb);
         }
