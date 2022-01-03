@@ -12,6 +12,40 @@ use std::{
     fs,
     sync::Arc,
 };
+use tracing::span::{Attributes, Record};
+use tracing::{Metadata, Event, Id};
+
+struct FooSubscriber;
+
+impl tracing::Subscriber for FooSubscriber {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        unimplemented!()
+    }
+
+    fn new_span(&self, span: &Attributes<'_>) -> Id {
+        unimplemented!()
+    }
+
+    fn record(&self, span: &Id, values: &Record<'_>) {
+        println!("{:?}", values)
+    }
+
+    fn record_follows_from(&self, span: &Id, follows: &Id) {
+        unimplemented!()
+    }
+
+    fn event(&self, event: &Event<'_>) {
+        println!("{:?}", event)
+    }
+
+    fn enter(&self, span: &Id) {
+        unimplemented!()
+    }
+
+    fn exit(&self, span: &Id) {
+        unimplemented!()
+    }
+}
 
 pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, Vec<u8>) {
     // Generate dummy certificate.
@@ -30,6 +64,13 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, V
 pub extern "cdecl" fn default_server_config(
     mut out_handle: Out<RustlsServerConfigHandle>,
 ) -> QuinnResult {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter("trace")
+            .finish(),
+    )
+        .unwrap();
+
     let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
 
     let config = rustls::ServerConfig::builder()

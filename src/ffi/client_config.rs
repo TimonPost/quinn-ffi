@@ -5,3 +5,4 @@ pub struct ClientConfig {}
 pub extern "C" fn default() -> ClientConfig {
     ClientConfig {}
 }
+

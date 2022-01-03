@@ -30,6 +30,7 @@ use Into;
 use crate::ffi::{Out, QuinnError};
 use crate::proto::{StreamId, RecvStream, Dir};
 use std::io::Write;
+use std::net::SocketAddr;
 
 /// ===== Endpoint API'S ======
 
@@ -71,9 +72,13 @@ pub extern "cdecl" fn handle_datagram(
 
     let slice = unsafe { data.as_bytes(length) };
 
+    let addr: SocketAddr = address.into();
+
+    println!("handle: {}", addr);
+
     match endpoint.inner.handle(
         Instant::now(),
-        address.into(),
+        addr,
         None,
         None,
         BytesMut::from(slice),
@@ -230,77 +235,66 @@ pub mod callbacks {
 
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
-        println!("rust; on_new_connection");
         unsafe {
             ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::alloc(handle), con);
         }
     }
 
     pub(crate) fn on_connected(con: u32) {
-        println!("rust; on_connected");
         unsafe {
             ON_CONNECTED.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_connection_lost(con: u32) {
-        println!("rust; on_connection_lost");
         unsafe {
             ON_CONNECTION_LOST.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_readable");
         unsafe {
             ON_STREAM_READABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_writable");
         unsafe {
             ON_STREAM_WRITABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_finished");
         unsafe {
             ON_STREAM_FINISHED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_stopped");
         unsafe {
             ON_STREAM_STOPPED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_available(con: u32, dir: Dir) {
-        println!("rust; on_stream_available");
         unsafe {
             ON_STREAM_AVAILABLE.unwrap_unchecked()(con, dir as u8);
         }
     }
 
     pub(crate) fn on_datagram_received(con: u32) {
-        println!("rust; on_datagram_received");
         unsafe {
             ON_DATAGRAM_RECEIVED.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_stream_opened(con: u32, dir: Dir) {
-        println!("rust; on_stream_opened");
         unsafe {
             ON_STREAM_OPENED.unwrap_unchecked()(con, dir as u8);
         }
     }
 
     pub(crate) fn on_transmit(endpoint_id: u8, transmit: Transmit) {
-        println!("rust; on_transmit");
         unsafe {
             let addr = transmit.destination.into();
             ON_TRANSMIT.unwrap_unchecked()(

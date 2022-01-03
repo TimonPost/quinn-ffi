@@ -91,9 +91,11 @@ impl ConnectionInner {
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     callbacks::on_stream_opened(self.connection_id(), Dir::Uni);
+                    println!("!!!on uni stream open!!!")
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
                     callbacks::on_stream_opened(self.connection_id(), Dir::Bi);
+                    println!("!!!on bi stream open!!!")
                 }
                 DatagramReceived => {
                     callbacks::on_datagram_received(self.connection_id());

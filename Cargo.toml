@@ -14,3 +14,5 @@ libc = "0.2.112"
 rustls = { version = "0.20", default-features = false, features = ["quic"] }
 rcgen = "0.8.14"
 bytes="1.1.0"
+tracing = "0.1.29"
+tracing-subscriber = {version="0.3.5", features=["env-filter"]}
