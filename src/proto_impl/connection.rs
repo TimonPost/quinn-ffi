@@ -14,6 +14,7 @@ use std::{sync::{
     mpsc,
     mpsc::Sender,
 }, time::Instant, io};
+use crate::proto_impl::result::QuinnErrorKind;
 
 
 #[derive(Debug)]
@@ -32,43 +33,43 @@ pub struct ConnectionInner {
 }
 
 impl ConnectionInner {
-    pub fn poll(&mut self) -> Result<(), io::Error> {
+    pub fn poll(&mut self)  -> Result<(), QuinnErrorKind> {
         let transmit = self.inner.poll_transmit(Instant::now(), 1);
         let _next_instant = self.inner.poll_timeout();
         let event = self.inner.poll_endpoint_events();
 
         if let Some(event) = event {
             self.endpoint_events
-                .send((self.connection_handle, EndpointEvent::Proto(event)))
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .send((self.connection_handle, EndpointEvent::Proto(event)))?;
         }
 
         if let Some(event) = transmit {
             self.endpoint_events
-                .send((self.connection_handle, EndpointEvent::Transmit(event)))
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                .send((self.connection_handle, EndpointEvent::Transmit(event)))?;
         }
 
         self.handle_app_events();
-        self.handle_connection_events();
+        self.handle_connection_events()?;
 
         Ok(())
     }
 
-    fn handle_connection_events(&mut self) {
-        if let Ok(event) = self.connection_events.try_recv() {
-            match event {
-                ConnectionEvent::Close { .. } => {
-                    // close
-                }
-                ConnectionEvent::Proto(proto) => {
-                   self.inner.handle_event(proto);
-                }
-                ConnectionEvent::Ping => {
-                    // ping
-                }
+    fn handle_connection_events(&mut self) -> Result<(), QuinnErrorKind> {
+        let event = self.connection_events.try_recv()?;
+
+        match event {
+            ConnectionEvent::Close { .. } => {
+                // close
+            }
+            ConnectionEvent::Proto(proto) => {
+                self.inner.handle_event(proto);
+            }
+            ConnectionEvent::Ping => {
+                // ping
             }
         }
+
+        Ok(())
     }
 
     fn handle_app_events(&mut self) {

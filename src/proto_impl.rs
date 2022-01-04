@@ -2,7 +2,9 @@ mod addr;
 mod connection;
 mod endpoint;
 mod server_config;
+mod result;
 
+pub use result::{QuinnErrorKind};
 pub use addr::IpAddr;
 pub use connection::{
     ConnectionEvent,

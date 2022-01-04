@@ -1,22 +1,14 @@
-use crate::{
-    error,
-    ffi::{
-        QuinnResult,
-        Ref,
-    },
-    proto::{
-        DatagramEvent,
-        Endpoint,
-        EndpointConfig,
-    },
-    proto_impl::{
-        EndpointInner,
-        IpAddr,
-    },
-    ConnectionHandle,
-    EndpointHandle,
-    RustlsServerConfigHandle,
-};
+use crate::{error, ffi::{
+    QuinnResult,
+    Ref,
+}, proto::{
+    DatagramEvent,
+    Endpoint,
+    EndpointConfig,
+}, proto_impl::{
+    EndpointInner,
+    IpAddr,
+}, ConnectionHandle, EndpointHandle, RustlsServerConfigHandle, proto};
 use bytes::{BytesMut, Bytes};
 use libc::size_t;
 use std::{
@@ -29,8 +21,10 @@ use std::{
 use Into;
 use crate::ffi::{Out, QuinnError};
 use crate::proto::{StreamId, RecvStream, Dir};
-use std::io::Write;
+use std::io::{Write, Error};
 use std::net::SocketAddr;
+use crate::proto_impl::{ConnectionInner, QuinnErrorKind};
+use quinn_proto::VarInt;
 
 /// ===== Endpoint API'S ======
 
@@ -158,7 +152,7 @@ pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_directi
     let dir = if stream_direction == 0 {Dir::Bi} else {Dir::Uni};
 
     if let Some(stream_id) = handle.inner.streams().accept(dir) {
-        unsafe {stream_id_out.init(stream_id.index());}
+        unsafe {stream_id_out.init(VarInt::from(stream_id).into());}
         QuinnResult::ok()
     } else {
         QuinnResult::err().context(QuinnError::new(0, "No stream to accept!".to_string()))
@@ -168,42 +162,27 @@ pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_directi
 
 #[no_mangle]
 pub extern "cdecl" fn read_stream(mut handle: ConnectionHandle, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> QuinnResult {
+    _read_stream(&mut handle, stream_id, message_buf, message_buf_len, actual_message_len).into()
+}
+
+fn _read_stream(handle: &mut ConnectionInner, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> Result<(), QuinnErrorKind>{
     let mut stream = handle.inner.recv_stream(StreamId(stream_id));
 
-    let read_result = stream.read(true);
+    let mut result = stream.read(true)?;
 
-    match read_result {
-        Ok(mut chunks) => {
-            let result = match chunks.next(message_buf_len) {
-                Ok(Some(chunk)) => {
-                    unsafe {
-                        let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+    if let Some(chunk) = result.next(message_buf_len)? {
+        unsafe {
+            let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
 
-                        let written = buffer.write(&chunk.bytes);
-                        if let Err(written) = written {
-                             return QuinnResult::err().context(QuinnError::new(0, written.to_string()))
-                        } else {
-                            actual_message_len.init(written.unwrap());
-                        }
-                    }
-                    QuinnResult::ok()
-                }
-                Err(e) => {
-                    QuinnResult::err().context(QuinnError::new(0, e.to_string()))
-                },
-                _=> QuinnResult::ok()
-            };
+            let written = buffer.write(&chunk.bytes)?;
 
-            if chunks.finalize().should_transmit() {
-                println!("should transmit")
-            }
-
-            result
-        }
-        Err(e) => {
-            return QuinnResult::err().context(QuinnError::new(0, e.to_string()));
+            unsafe {actual_message_len.init(written);}
         }
     }
+
+    result.finalize();
+
+    Ok(())
 }
 
 pub mod callbacks {
@@ -219,6 +198,7 @@ pub mod callbacks {
     };
     use libc::size_t;
     use crate::proto::StreamId;
+    use quinn_proto::VarInt;
 
     // Callbacks should be initialized before applications runs. Therefore we can unwrap unchecked and allow statics to be mutable.
     static mut ON_NEW_CONNECTION: Option<extern "C" fn(super::ConnectionHandle, u32)> = None;
@@ -254,25 +234,25 @@ pub mod callbacks {
 
     pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_READABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_READABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_WRITABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_WRITABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_FINISHED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_FINISHED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_STOPPED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_STOPPED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 

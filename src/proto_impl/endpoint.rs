@@ -96,8 +96,7 @@ impl EndpointInner {
         let _ = self
             .connections
             .get_mut(&handle)
-            .unwrap()
-            .send(ConnectionEvent::Proto(event));
+            .map(|sender| sender.send(ConnectionEvent::Proto(event)));
     }
 
     pub fn handle_connection_events(&mut self) {
@@ -116,8 +115,8 @@ impl EndpointInner {
                         let _ = self
                             .connections
                             .get_mut(&handle)
-                            .unwrap()
-                            .send(ConnectionEvent::Proto(event));
+                            .map(|sender| sender
+                            .send(ConnectionEvent::Proto(event)));
                     }
                 }
                 EndpointEvent::Transmit(transmit) => {
