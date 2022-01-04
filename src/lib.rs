@@ -29,3 +29,4 @@ fn error() -> QuinnResult {
 pub type RustlsServerConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ServerConfig>;
 pub type EndpointHandle<'a> = HandleSync<'a, Mutex<EndpointInner>>;
 pub type ConnectionHandle<'a> = HandleExclusive<'a, ConnectionInner>;
+

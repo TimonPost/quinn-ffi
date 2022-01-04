@@ -1,22 +1,14 @@
-use crate::{
-    error,
-    ffi::{
-        QuinnResult,
-        Ref,
-    },
-    proto::{
-        DatagramEvent,
-        Endpoint,
-        EndpointConfig,
-    },
-    proto_impl::{
-        EndpointInner,
-        IpAddr,
-    },
-    ConnectionHandle,
-    EndpointHandle,
-    RustlsServerConfigHandle,
-};
+use crate::{error, ffi::{
+    QuinnResult,
+    Ref,
+}, proto::{
+    DatagramEvent,
+    Endpoint,
+    EndpointConfig,
+}, proto_impl::{
+    EndpointInner,
+    IpAddr,
+}, ConnectionHandle, EndpointHandle, RustlsServerConfigHandle, proto};
 use bytes::{BytesMut, Bytes};
 use libc::size_t;
 use std::{
@@ -29,7 +21,10 @@ use std::{
 use Into;
 use crate::ffi::{Out, QuinnError};
 use crate::proto::{StreamId, RecvStream, Dir};
-use std::io::Write;
+use std::io::{Write, Error};
+use std::net::SocketAddr;
+use crate::proto_impl::{ConnectionInner, QuinnErrorKind};
+use quinn_proto::VarInt;
 
 /// ===== Endpoint API'S ======
 
@@ -71,9 +66,13 @@ pub extern "cdecl" fn handle_datagram(
 
     let slice = unsafe { data.as_bytes(length) };
 
+    let addr: SocketAddr = address.into();
+
+    println!("handle: {}", addr);
+
     match endpoint.inner.handle(
         Instant::now(),
-        address.into(),
+        addr,
         None,
         None,
         BytesMut::from(slice),
@@ -153,7 +152,7 @@ pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_directi
     let dir = if stream_direction == 0 {Dir::Bi} else {Dir::Uni};
 
     if let Some(stream_id) = handle.inner.streams().accept(dir) {
-        unsafe {stream_id_out.init(stream_id.index());}
+        unsafe {stream_id_out.init(VarInt::from(stream_id).into());}
         QuinnResult::ok()
     } else {
         QuinnResult::err().context(QuinnError::new(0, "No stream to accept!".to_string()))
@@ -163,42 +162,27 @@ pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_directi
 
 #[no_mangle]
 pub extern "cdecl" fn read_stream(mut handle: ConnectionHandle, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> QuinnResult {
+    _read_stream(&mut handle, stream_id, message_buf, message_buf_len, actual_message_len).into()
+}
+
+fn _read_stream(handle: &mut ConnectionInner, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> Result<(), QuinnErrorKind>{
     let mut stream = handle.inner.recv_stream(StreamId(stream_id));
 
-    let read_result = stream.read(true);
+    let mut result = stream.read(true)?;
 
-    match read_result {
-        Ok(mut chunks) => {
-            let result = match chunks.next(message_buf_len) {
-                Ok(Some(chunk)) => {
-                    unsafe {
-                        let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+    if let Some(chunk) = result.next(message_buf_len)? {
+        unsafe {
+            let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
 
-                        let written = buffer.write(&chunk.bytes);
-                        if let Err(written) = written {
-                             return QuinnResult::err().context(QuinnError::new(0, written.to_string()))
-                        } else {
-                            actual_message_len.init(written.unwrap());
-                        }
-                    }
-                    QuinnResult::ok()
-                }
-                Err(e) => {
-                    QuinnResult::err().context(QuinnError::new(0, e.to_string()))
-                },
-                _=> QuinnResult::ok()
-            };
+            let written = buffer.write(&chunk.bytes)?;
 
-            if chunks.finalize().should_transmit() {
-                println!("should transmit")
-            }
-
-            result
-        }
-        Err(e) => {
-            return QuinnResult::err().context(QuinnError::new(0, e.to_string()));
+            unsafe {actual_message_len.init(written);}
         }
     }
+
+    result.finalize();
+
+    Ok(())
 }
 
 pub mod callbacks {
@@ -214,6 +198,7 @@ pub mod callbacks {
     };
     use libc::size_t;
     use crate::proto::StreamId;
+    use quinn_proto::VarInt;
 
     // Callbacks should be initialized before applications runs. Therefore we can unwrap unchecked and allow statics to be mutable.
     static mut ON_NEW_CONNECTION: Option<extern "C" fn(super::ConnectionHandle, u32)> = None;
@@ -230,77 +215,66 @@ pub mod callbacks {
 
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
-        println!("rust; on_new_connection");
         unsafe {
             ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::alloc(handle), con);
         }
     }
 
     pub(crate) fn on_connected(con: u32) {
-        println!("rust; on_connected");
         unsafe {
             ON_CONNECTED.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_connection_lost(con: u32) {
-        println!("rust; on_connection_lost");
         unsafe {
             ON_CONNECTION_LOST.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_readable");
         unsafe {
-            ON_STREAM_READABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_READABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_writable");
         unsafe {
-            ON_STREAM_WRITABLE.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_WRITABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_finished");
         unsafe {
-            ON_STREAM_FINISHED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_FINISHED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
-        println!("rust; on_stream_stopped");
         unsafe {
-            ON_STREAM_STOPPED.unwrap_unchecked()(con, stream_id.index(), stream_id.dir() as u8);
+            ON_STREAM_STOPPED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
         }
     }
 
     pub(crate) fn on_stream_available(con: u32, dir: Dir) {
-        println!("rust; on_stream_available");
         unsafe {
             ON_STREAM_AVAILABLE.unwrap_unchecked()(con, dir as u8);
         }
     }
 
     pub(crate) fn on_datagram_received(con: u32) {
-        println!("rust; on_datagram_received");
         unsafe {
             ON_DATAGRAM_RECEIVED.unwrap_unchecked()(con);
         }
     }
 
     pub(crate) fn on_stream_opened(con: u32, dir: Dir) {
-        println!("rust; on_stream_opened");
         unsafe {
             ON_STREAM_OPENED.unwrap_unchecked()(con, dir as u8);
         }
     }
 
     pub(crate) fn on_transmit(endpoint_id: u8, transmit: Transmit) {
-        println!("rust; on_transmit");
         unsafe {
             let addr = transmit.destination.into();
             ON_TRANSMIT.unwrap_unchecked()(

@@ -4,6 +4,7 @@ use std::{
         CString,
     },
 };
+use std::error::Error;
 
 thread_local!(
     static LAST_RESULT: RefCell<Option<LastResult>> = RefCell::new(None);
@@ -60,6 +61,19 @@ impl QuinnResult {
 
             return f(message);
         })
+    }
+}
+
+impl<T, E: Error> From<Result<T, E>> for QuinnResult {
+    fn from(result: Result<T, E>) -> Self {
+        match result {
+            Ok(_) => {
+                QuinnResult::ok()
+            }
+            Err(e) => {
+                QuinnResult::err().context(QuinnError::new(0, e.to_string()))
+            }
+        }
     }
 }
 
