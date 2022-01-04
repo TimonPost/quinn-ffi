@@ -1,24 +1,16 @@
 use crate::{
-    ffi::{
-        bindings::callbacks,
-    },
+    ffi::bindings::callbacks,
     proto,
-    proto_impl::{
-        connection::{
-            ConnectionEvent,
-            ConnectionInner,
-        },
+    proto_impl::connection::{
+        ConnectionEvent,
+        ConnectionInner,
     },
 };
-
-
 
 use quinn_proto::Transmit;
 
 use std::{
-    collections::{
-        HashMap,
-    },
+    collections::HashMap,
     sync::{
         atomic::{
             AtomicU8,
@@ -115,8 +107,7 @@ impl EndpointInner {
                         let _ = self
                             .connections
                             .get_mut(&handle)
-                            .map(|sender| sender
-                            .send(ConnectionEvent::Proto(event)));
+                            .map(|sender| sender.send(ConnectionEvent::Proto(event)));
                     }
                 }
                 EndpointEvent::Transmit(transmit) => {

@@ -1,10 +1,8 @@
 use std::{
     cell::RefCell,
-    ffi::{
-        CString,
-    },
+    error::Error,
+    ffi::CString,
 };
-use std::error::Error;
 
 thread_local!(
     static LAST_RESULT: RefCell<Option<LastResult>> = RefCell::new(None);
@@ -67,13 +65,15 @@ impl QuinnResult {
 impl<T, E: Error> From<Result<T, E>> for QuinnResult {
     fn from(result: Result<T, E>) -> Self {
         match result {
-            Ok(_) => {
-                QuinnResult::ok()
-            }
-            Err(e) => {
-                QuinnResult::err().context(QuinnError::new(0, e.to_string()))
-            }
+            Ok(_) => QuinnResult::ok(),
+            Err(e) => QuinnResult::err().context(QuinnError::new(0, e.to_string())),
         }
+    }
+}
+
+impl From<&str> for QuinnResult {
+    fn from(result: &str) -> Self {
+        QuinnResult::err().context(QuinnError::new(0, result.to_string()))
     }
 }
 

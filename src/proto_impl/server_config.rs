@@ -5,13 +5,17 @@ use crate::{
     },
     RustlsServerConfigHandle,
 };
-use rustls::{PrivateKey, RootCertStore, Certificate, KeyLogFile};
+use rustls::{
+    Certificate,
+    KeyLogFile,
+    PrivateKey,
+    RootCertStore,
+};
 use std::{
     fs,
     sync::Arc,
 };
-use tracing::span::{Attributes, Record};
-use tracing::{Metadata, Event, Id};
+
 use crate::proto::ServerConfig;
 
 pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, Vec<u8>) {
@@ -36,7 +40,7 @@ pub extern "cdecl" fn default_server_config(
             .with_env_filter("trace")
             .finish(),
     )
-        .unwrap();
+    .unwrap();
 
     let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
 
@@ -48,7 +52,8 @@ pub extern "cdecl" fn default_server_config(
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap().with_no_client_auth()
+        .unwrap()
+        .with_no_client_auth()
         .with_single_cert(vec![cert], key)
         .unwrap();
 
@@ -60,5 +65,3 @@ pub extern "cdecl" fn default_server_config(
 
     QuinnResult::ok()
 }
-
-

@@ -1,17 +1,37 @@
-use crate::{error, ffi::{
-    QuinnResult,
-    Ref,
-}, proto::{
-    DatagramEvent,
-    Endpoint,
-    EndpointConfig,
-}, proto_impl::{
-    EndpointInner,
-    IpAddr,
-}, ConnectionHandle, EndpointHandle, RustlsServerConfigHandle, proto};
-use bytes::{BytesMut, Bytes};
+use crate::{
+    error,
+    ffi::{
+        Out,
+        QuinnError,
+        QuinnResult,
+        Ref,
+    },
+    proto::{
+        DatagramEvent,
+        Dir,
+        Endpoint,
+        EndpointConfig,
+        StreamId,
+    },
+    proto_impl::{
+        ConnectionInner,
+        EndpointInner,
+        IpAddr,
+        QuinnErrorKind,
+    },
+    ConnectionHandle,
+    EndpointHandle,
+    RustlsServerConfigHandle,
+};
+use bytes::BytesMut;
 use libc::size_t;
+use quinn_proto::{
+    VarInt,
+    VarIntBoundsExceeded,
+};
 use std::{
+    io::Write,
+    net::SocketAddr,
     sync::{
         Arc,
         Mutex,
@@ -19,12 +39,6 @@ use std::{
     time::Instant,
 };
 use Into;
-use crate::ffi::{Out, QuinnError};
-use crate::proto::{StreamId, RecvStream, Dir};
-use std::io::{Write, Error};
-use std::net::SocketAddr;
-use crate::proto_impl::{ConnectionInner, QuinnErrorKind};
-use quinn_proto::VarInt;
 
 /// ===== Endpoint API'S ======
 
@@ -68,15 +82,10 @@ pub extern "cdecl" fn handle_datagram(
 
     let addr: SocketAddr = address.into();
 
-    println!("handle: {}", addr);
-
-    match endpoint.inner.handle(
-        Instant::now(),
-        addr,
-        None,
-        None,
-        BytesMut::from(slice),
-    ) {
+    match endpoint
+        .inner
+        .handle(Instant::now(), addr, None, None, BytesMut::from(slice))
+    {
         Some((handle, DatagramEvent::NewConnection(conn))) => {
             let connection = endpoint.add_connection(handle, conn);
 
@@ -102,8 +111,7 @@ pub extern "cdecl" fn get_connection(handle: ConnectionHandle) -> QuinnResult {
 #[no_mangle]
 pub extern "cdecl" fn poll_connection(mut handle: ConnectionHandle) -> QuinnResult {
     if let Err(reason) = handle.poll() {
-        QuinnResult::err()
-            .context(QuinnError::new(0, reason.to_string()))
+        QuinnResult::err().context(QuinnError::new(0, reason.to_string()))
     } else {
         QuinnResult::ok()
     }
@@ -143,30 +151,52 @@ pub extern "cdecl" fn last_error(
     })
 }
 
-
 /// ===== Stream API'S ======
 
 #[no_mangle]
-pub extern "cdecl" fn accept_stream(mut handle: ConnectionHandle, stream_direction: u8, mut stream_id_out: Out<u64>) -> QuinnResult {
-
-    let dir = if stream_direction == 0 {Dir::Bi} else {Dir::Uni};
+pub extern "cdecl" fn accept_stream(
+    mut handle: ConnectionHandle,
+    stream_direction: u8,
+    mut stream_id_out: Out<u64>,
+) -> QuinnResult {
+    let dir = dir_from_u8(stream_direction);
 
     if let Some(stream_id) = handle.inner.streams().accept(dir) {
-        unsafe {stream_id_out.init(VarInt::from(stream_id).into());}
+        unsafe {
+            stream_id_out.init(VarInt::from(stream_id).into());
+        }
         QuinnResult::ok()
     } else {
         QuinnResult::err().context(QuinnError::new(0, "No stream to accept!".to_string()))
     }
 }
 
-
 #[no_mangle]
-pub extern "cdecl" fn read_stream(mut handle: ConnectionHandle, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> QuinnResult {
-    _read_stream(&mut handle, stream_id, message_buf, message_buf_len, actual_message_len).into()
+pub extern "cdecl" fn read_stream(
+    mut handle: ConnectionHandle,
+    stream_id: u64,
+    message_buf: Out<u8>,
+    message_buf_len: size_t,
+    actual_message_len: Out<size_t>,
+) -> QuinnResult {
+    _read_stream(
+        &mut handle,
+        stream_id,
+        message_buf,
+        message_buf_len,
+        actual_message_len,
+    )
+    .into()
 }
 
-fn _read_stream(handle: &mut ConnectionInner, stream_id: u64, mut message_buf: Out<u8>, message_buf_len: size_t, mut actual_message_len: Out<size_t>) -> Result<(), QuinnErrorKind>{
-    let mut stream = handle.inner.recv_stream(StreamId(stream_id));
+fn _read_stream(
+    handle: &mut ConnectionInner,
+    stream_id: u64,
+    mut message_buf: Out<u8>,
+    message_buf_len: size_t,
+    mut actual_message_len: Out<size_t>,
+) -> Result<(), QuinnErrorKind> {
+    let mut stream = handle.inner.recv_stream(_stream_id(stream_id)?);
 
     let mut result = stream.read(true)?;
 
@@ -176,7 +206,9 @@ fn _read_stream(handle: &mut ConnectionInner, stream_id: u64, mut message_buf: O
 
             let written = buffer.write(&chunk.bytes)?;
 
-            unsafe {actual_message_len.init(written);}
+            unsafe {
+                actual_message_len.init(written);
+            }
         }
     }
 
@@ -185,10 +217,72 @@ fn _read_stream(handle: &mut ConnectionInner, stream_id: u64, mut message_buf: O
     Ok(())
 }
 
+#[no_mangle]
+pub extern "cdecl" fn write_stream(
+    mut handle: ConnectionHandle,
+    stream_id: u64,
+    buffer: Ref<u8>,
+    buf_len: size_t,
+    written_bytes: Out<size_t>,
+) -> QuinnResult {
+    _write_stream(&mut handle, stream_id, buffer, buf_len, written_bytes).into()
+}
+
+fn _write_stream(
+    handle: &mut ConnectionInner,
+    stream_id: u64,
+    buffer: Ref<u8>,
+    buf_len: size_t,
+    mut written_bytes: Out<size_t>,
+) -> Result<(), QuinnErrorKind> {
+    let mut stream = handle.inner.send_stream(_stream_id(stream_id)?);
+
+    let result = stream.write(unsafe { buffer.as_bytes(buf_len) })?;
+    unsafe {
+        written_bytes.init(result);
+    }
+
+    Ok(())
+}
+
+#[no_mangle]
+pub extern "cdecl" fn open_stream(
+    mut handle: ConnectionHandle,
+    stream_direction: u8,
+    mut opened_stream_id: Out<u64>,
+) -> QuinnResult {
+    let opened_stream = handle.inner.streams().open(dir_from_u8(stream_direction));
+
+    if let Some(stream_id) = opened_stream {
+        unsafe { opened_stream_id.init(_stream_id_to_u64(stream_id)) }
+        QuinnResult::ok()
+    } else {
+        QuinnResult::from("Streams in the given direction are currently exhausted")
+    }
+}
+
+fn dir_from_u8(dir: u8) -> Dir {
+    if dir == 0 {
+        Dir::Bi
+    } else {
+        Dir::Uni
+    }
+}
+
+fn _stream_id_to_u64(stream_id: StreamId) -> u64 {
+    VarInt::from(stream_id).into_inner()
+}
+
+fn _stream_id(stream_id: u64) -> Result<StreamId, VarIntBoundsExceeded> {
+    Ok(StreamId::from(VarInt::from_u64(stream_id)?))
+}
+
 pub mod callbacks {
     use crate::{
+        ffi::QuinnResult,
         proto::{
             Dir,
+            StreamId,
             Transmit,
         },
         proto_impl::{
@@ -197,7 +291,6 @@ pub mod callbacks {
         },
     };
     use libc::size_t;
-    use crate::proto::StreamId;
     use quinn_proto::VarInt;
 
     // Callbacks should be initialized before applications runs. Therefore we can unwrap unchecked and allow statics to be mutable.
@@ -212,7 +305,6 @@ pub mod callbacks {
     static mut ON_DATAGRAM_RECEIVED: Option<extern "C" fn(u32)> = None;
     static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u8)> = None;
     static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
-
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
         unsafe {
@@ -234,25 +326,41 @@ pub mod callbacks {
 
     pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_READABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
+            ON_STREAM_READABLE.unwrap_unchecked()(
+                con,
+                VarInt::from(stream_id).into(),
+                stream_id.dir() as u8,
+            );
         }
     }
 
     pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_WRITABLE.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
+            ON_STREAM_WRITABLE.unwrap_unchecked()(
+                con,
+                VarInt::from(stream_id).into(),
+                stream_id.dir() as u8,
+            );
         }
     }
 
     pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_FINISHED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
+            ON_STREAM_FINISHED.unwrap_unchecked()(
+                con,
+                VarInt::from(stream_id).into(),
+                stream_id.dir() as u8,
+            );
         }
     }
 
     pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
         unsafe {
-            ON_STREAM_STOPPED.unwrap_unchecked()(con, VarInt::from(stream_id).into(), stream_id.dir() as u8);
+            ON_STREAM_STOPPED.unwrap_unchecked()(
+                con,
+                VarInt::from(stream_id).into(),
+                stream_id.dir() as u8,
+            );
         }
     }
 
@@ -287,79 +395,94 @@ pub mod callbacks {
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_new_connection(cb: extern "C" fn(super::ConnectionHandle, u32)) {
+    pub extern "cdecl" fn set_on_new_connection(
+        cb: extern "C" fn(super::ConnectionHandle, u32),
+    ) -> QuinnResult {
         unsafe {
             ON_NEW_CONNECTION = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_connected(cb: extern "C" fn(u32)) {
+    pub extern "cdecl" fn set_on_connected(cb: extern "C" fn(u32)) -> QuinnResult {
         unsafe {
             ON_CONNECTED = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_connection_lost(cb: extern "C" fn(u32)) {
+    pub extern "cdecl" fn set_on_connection_lost(cb: extern "C" fn(u32)) -> QuinnResult {
         unsafe {
             ON_CONNECTION_LOST = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_writable(cb: extern "C" fn(u32, u64, u8)) {
+    pub extern "cdecl" fn set_on_stream_writable(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_WRITABLE = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_readable(cb: extern "C" fn(u32, u64, u8)) {
+    pub extern "cdecl" fn set_on_stream_readable(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_READABLE = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_finished(cb: extern "C" fn(u32, u64, u8)) {
+    pub extern "cdecl" fn set_on_stream_finished(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_FINISHED = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_stopped(cb: extern "C" fn(u32, u64, u8)) {
+    pub extern "cdecl" fn set_on_stream_stopped(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_STOPPED = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub(crate) fn set_on_stream_available(cb: extern "C" fn(u32, u8)) {
+    pub(crate) fn set_on_stream_available(cb: extern "C" fn(u32, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_AVAILABLE = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub(crate) fn set_on_datagram_received(cb: extern "C" fn(u32)) {
+    pub(crate) fn set_on_datagram_received(cb: extern "C" fn(u32)) -> QuinnResult {
         unsafe {
             ON_DATAGRAM_RECEIVED = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub(crate) fn set_on_stream_opened(cb: extern "C" fn(u32, u8)) {
+    pub(crate) fn set_on_stream_opened(cb: extern "C" fn(u32, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_OPENED = Some(cb);
         }
+        QuinnResult::ok()
     }
 
     #[no_mangle]
-    pub(crate) fn set_on_transmit(cb: extern "C" fn(u8, *const u8, size_t, *const IpAddr)) {
+    pub(crate) fn set_on_transmit(
+        cb: extern "C" fn(u8, *const u8, size_t, *const IpAddr),
+    ) -> QuinnResult {
         unsafe {
             ON_TRANSMIT = Some(cb);
         }
+        QuinnResult::ok()
     }
 }

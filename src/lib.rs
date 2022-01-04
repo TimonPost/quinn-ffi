@@ -1,16 +1,17 @@
 #![feature(option_result_unwrap_unchecked)]
 #![feature(box_into_inner)]
 
-use crate::ffi::{HandleExclusive, QuinnError, QuinnResult, HandleSync};
-use std::{
-    sync::Mutex,
+use crate::ffi::{
+    HandleExclusive,
+    HandleSync,
+    QuinnError,
+    QuinnResult,
 };
+use std::sync::Mutex;
 
-use crate::{
-    proto_impl::{
-        ConnectionInner,
-        EndpointInner,
-    },
+use crate::proto_impl::{
+    ConnectionInner,
+    EndpointInner,
 };
 pub use quinn_proto as proto;
 use std::ffi::CString;
@@ -29,4 +30,3 @@ fn error() -> QuinnResult {
 pub type RustlsServerConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ServerConfig>;
 pub type EndpointHandle<'a> = HandleSync<'a, Mutex<EndpointInner>>;
 pub type ConnectionHandle<'a> = HandleExclusive<'a, ConnectionInner>;
-

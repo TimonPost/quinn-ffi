@@ -1,21 +1,23 @@
 use crate::{
-    ffi::{
-        bindings::callbacks,
-    },
+    ffi::bindings::callbacks,
     proto,
     proto::VarInt,
-    proto_impl::endpoint::EndpointEvent,
+    proto_impl::{
+        endpoint::EndpointEvent,
+        result::QuinnErrorKind,
+    },
 };
 use quinn_proto::{
     Dir,
     StreamEvent,
 };
-use std::{sync::{
-    mpsc,
-    mpsc::Sender,
-}, time::Instant, io};
-use crate::proto_impl::result::QuinnErrorKind;
-
+use std::{
+    sync::{
+        mpsc,
+        mpsc::Sender,
+    },
+    time::Instant,
+};
 
 #[derive(Debug)]
 pub enum ConnectionEvent {
@@ -33,7 +35,7 @@ pub struct ConnectionInner {
 }
 
 impl ConnectionInner {
-    pub fn poll(&mut self)  -> Result<(), QuinnErrorKind> {
+    pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
         let transmit = self.inner.poll_transmit(Instant::now(), 1);
         let _next_instant = self.inner.poll_timeout();
         let event = self.inner.poll_endpoint_events();
