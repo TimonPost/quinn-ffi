@@ -9,6 +9,7 @@ use crate::{
 
 use quinn_proto::Transmit;
 
+use crate::proto_impl::QuinnErrorKind;
 use std::{
     collections::HashMap,
     sync::{
@@ -20,6 +21,13 @@ use std::{
     },
 };
 
+/// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
+///
+/// This helps ensure we don't starve anything when the CPU is slower than the link.
+/// Value is selected by picking a low number which didn't degrade throughput in benchmarks.
+const IO_LOOP_BOUND: usize = 160;
+
+/// An endpoint id that is increased for each created endpoint.
 static ENDPOINT_ID: AtomicU8 = AtomicU8::new(0);
 
 #[derive(Debug)]
@@ -52,9 +60,11 @@ impl EndpointInner {
     }
 
     pub fn poll(&mut self) {
-        if let Some(transmit) = self.inner.poll_transmit() {
+        while let Some(transmit) = self.inner.poll_transmit() {
             self.notify_transmit(transmit);
         }
+
+        // TODO limit max outgoing, invoke callback to poll again.
 
         self.handle_connection_events();
     }
@@ -71,49 +81,56 @@ impl EndpointInner {
         let (send, recv) = mpsc::channel();
         let _ = self.connections.insert(handle, send);
 
-        ConnectionInner {
-            inner: connection,
-            connected: false,
-            connection_events: recv,
-            endpoint_events: self.endpoint_events_tx.clone(),
-            connection_handle: handle,
-        }
+        ConnectionInner::new(connection, handle, recv, self.endpoint_events_tx.clone())
     }
 
     pub fn forward_event_to_connection(
         &mut self,
         handle: proto::ConnectionHandle,
         event: proto::ConnectionEvent,
-    ) {
-        let _ = self
-            .connections
+    ) -> Result<(), QuinnErrorKind> {
+        self.connections
             .get_mut(&handle)
-            .map(|sender| sender.send(ConnectionEvent::Proto(event)));
+            .unwrap()
+            .send(ConnectionEvent::Proto(event))?;
+
+        Ok(())
     }
 
-    pub fn handle_connection_events(&mut self) {
-        while let Ok((handle, event)) = self.endpoint_events_rx.try_recv() {
-            match event {
-                EndpointEvent::Proto(proto) => {
-                    if proto.is_drained() {
-                        self.connections.remove(&handle);
-                        if self.connections.is_empty() {
-                            //self.idle.notify_waiters();
+    pub fn handle_connection_events(&mut self) -> Result<bool, QuinnErrorKind> {
+        for _ in 0..IO_LOOP_BOUND {
+            match self.endpoint_events_rx.try_recv() {
+                Ok((handle, event)) => {
+                    match event {
+                        EndpointEvent::Proto(proto) => {
+                            if proto.is_drained() {
+                                self.connections.remove(&handle);
+                                if self.connections.is_empty() {
+                                    //self.idle.notify_waiters();
+                                }
+                            }
+
+                            if let Some(event) = self.inner.handle_event(handle, proto) {
+                                // Ignoring errors from dropped connections that haven't yet been cleaned up
+                                println!("endpoint proto event");
+                                self.connections
+                                    .get_mut(&handle)
+                                    .unwrap()
+                                    .send(ConnectionEvent::Proto(event))?;
+                            }
+                        }
+                        EndpointEvent::Transmit(transmit) => {
+                            self.notify_transmit(transmit);
                         }
                     }
-
-                    if let Some(event) = self.inner.handle_event(handle, proto) {
-                        // Ignoring errors from dropped connections that haven't yet been cleaned up
-                        let _ = self
-                            .connections
-                            .get_mut(&handle)
-                            .map(|sender| sender.send(ConnectionEvent::Proto(event)));
-                    }
                 }
-                EndpointEvent::Transmit(transmit) => {
-                    self.notify_transmit(transmit);
+                Err(_) => {
+                    // No more messages to be read.
+                    return Ok(false);
                 }
             }
         }
+
+        return Ok(true);
     }
 }

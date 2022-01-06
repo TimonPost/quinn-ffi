@@ -32,42 +32,110 @@ pub struct ConnectionInner {
     pub connection_events: mpsc::Receiver<ConnectionEvent>,
     pub endpoint_events: Sender<(proto::ConnectionHandle, EndpointEvent)>,
     pub connection_handle: proto::ConnectionHandle,
+
+    handle_event_called: bool,
+
+    timer_deadline: Option<Instant>,
+    last_poll: Instant,
+}
+
+impl ConnectionInner {
+    pub(crate) fn new(
+        connection: proto::Connection,
+        handle: proto::ConnectionHandle,
+        recv: mpsc::Receiver<ConnectionEvent>,
+        endpoint_events_tx: Sender<(proto::ConnectionHandle, EndpointEvent)>,
+    ) -> ConnectionInner {
+        ConnectionInner {
+            inner: connection,
+            connected: false,
+            connection_events: recv,
+            endpoint_events: endpoint_events_tx,
+            connection_handle: handle,
+            handle_event_called: false,
+            timer_deadline: None,
+            last_poll: Instant::now(),
+        }
+    }
 }
 
 impl ConnectionInner {
     pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
-        let transmit = self.inner.poll_transmit(Instant::now(), 1);
-        let _next_instant = self.inner.poll_timeout();
-        let event = self.inner.poll_endpoint_events();
+        let _ = self.handle_connection_events();
+        let mut poll_again = self.handle_transmits()?;
+        poll_again |= self.handle_timer();
 
-        if let Some(event) = event {
-            self.endpoint_events
-                .send((self.connection_handle, EndpointEvent::Proto(event)))?;
-        }
-
-        if let Some(event) = transmit {
-            self.endpoint_events
-                .send((self.connection_handle, EndpointEvent::Transmit(event)))?;
-        }
-
+        let _ = self.handle_endpoint_events();
         self.handle_app_events();
-        self.handle_connection_events()?;
+
+        if poll_again {
+            self.mark_pollable();
+        }
 
         Ok(())
     }
 
+    /// Mark the connection as pollable.
+    /// Connection should be polled when IO operations are performed, and timeout happened.
+    ///
+    /// This will invoke a callback.
+    pub fn mark_pollable(&self) {
+        callbacks::on_connection_pollable(self.connection_id())
+    }
+
+    fn handle_timer(&mut self) -> bool {
+        match self.inner.poll_timeout() {
+            Some(deadline) => {
+                self.timer_deadline = Some(deadline);
+            }
+            None => {
+                self.timer_deadline = None;
+                return false;
+            }
+        }
+
+        let now = Instant::now();
+
+        if now > self.timer_deadline.expect("timer deadline is initialized") {
+            self.inner.handle_timeout(Instant::now());
+            self.timer_deadline = None;
+            return true;
+        }
+
+        return false;
+    }
+
+    fn handle_transmits(&mut self) -> Result<bool, QuinnErrorKind> {
+        while let Some(t) = self.inner.poll_transmit(Instant::now(), 1) {
+            self.endpoint_events
+                .send((self.connection_handle, EndpointEvent::Transmit(t)))?;
+
+            // TODO: when max transmits return true.
+        }
+
+        return Ok(false);
+    }
+
+    fn handle_endpoint_events(&mut self) -> Result<(), QuinnErrorKind> {
+        if let Some(event) = self.inner.poll_endpoint_events() {
+            self.endpoint_events
+                .send((self.connection_handle, EndpointEvent::Proto(event)))?;
+        }
+        Ok(())
+    }
     fn handle_connection_events(&mut self) -> Result<(), QuinnErrorKind> {
         let event = self.connection_events.try_recv()?;
 
         match event {
             ConnectionEvent::Close { .. } => {
-                // close
+                // TODO: terminate connection
             }
             ConnectionEvent::Proto(proto) => {
+                self.handle_event_called = true;
                 self.inner.handle_event(proto);
             }
             ConnectionEvent::Ping => {
-                // ping
+                self.inner.ping();
             }
         }
 
@@ -79,14 +147,14 @@ impl ConnectionInner {
             use quinn_proto::Event::*;
             match event {
                 HandshakeDataReady => {
-                    // Handshake data ready
+                    // ignore for now
                 }
                 Connected => {
                     self.connected = true;
                     callbacks::on_connected(self.connection_id())
                 }
                 ConnectionLost { reason: _ } => {
-                    //self.terminate(reason);
+                    // TODO: self.terminate(reason);
                     callbacks::on_connection_lost(self.connection_id())
                 }
                 Stream(StreamEvent::Writable { id }) => {
@@ -94,11 +162,10 @@ impl ConnectionInner {
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     callbacks::on_stream_opened(self.connection_id(), Dir::Uni);
-                    println!("!!!on uni stream open!!!")
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
+                    println!("opened bi!");
                     callbacks::on_stream_opened(self.connection_id(), Dir::Bi);
-                    println!("!!!on bi stream open!!!")
                 }
                 DatagramReceived => {
                     callbacks::on_datagram_received(self.connection_id());

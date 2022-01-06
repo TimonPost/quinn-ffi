@@ -43,7 +43,7 @@ use Into;
 /// ===== Endpoint API'S ======
 
 #[no_mangle]
-pub extern "cdecl" fn create_endpoint(
+pub extern "cdecl" fn create_server_endpoint(
     handle: RustlsServerConfigHandle,
     mut endpoint_id: Out<u8>,
     mut endpoint_handle: Out<EndpointHandle>,
@@ -90,11 +90,15 @@ pub extern "cdecl" fn handle_datagram(
             let connection = endpoint.add_connection(handle, conn);
 
             callbacks::on_new_connection(handle.0 as u32, connection);
+            callbacks::on_connection_pollable(handle.0 as u32)
         }
         Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-            endpoint.forward_event_to_connection(handle, event);
+            endpoint.forward_event_to_connection(handle, event).unwrap();
+            callbacks::on_connection_pollable(handle.0 as u32);
         }
-        None => {}
+        None => {
+            println!("None handled");
+        }
     }
 
     return QuinnResult::ok();
@@ -103,18 +107,8 @@ pub extern "cdecl" fn handle_datagram(
 /// ===== Connection API'S ======
 
 #[no_mangle]
-pub extern "cdecl" fn get_connection(handle: ConnectionHandle) -> QuinnResult {
-    let _id = handle.connection_handle;
-    QuinnResult::ok()
-}
-
-#[no_mangle]
 pub extern "cdecl" fn poll_connection(mut handle: ConnectionHandle) -> QuinnResult {
-    if let Err(reason) = handle.poll() {
-        QuinnResult::err().context(QuinnError::new(0, reason.to_string()))
-    } else {
-        QuinnResult::ok()
-    }
+    handle.poll().into()
 }
 
 /// ===== Error API'S ======
@@ -162,6 +156,8 @@ pub extern "cdecl" fn accept_stream(
     let dir = dir_from_u8(stream_direction);
 
     if let Some(stream_id) = handle.inner.streams().accept(dir) {
+        handle.mark_pollable();
+
         unsafe {
             stream_id_out.init(VarInt::from(stream_id).into());
         }
@@ -212,7 +208,9 @@ fn _read_stream(
         }
     }
 
-    result.finalize();
+    if result.finalize().should_transmit() {
+        handle.mark_pollable();
+    }
 
     Ok(())
 }
@@ -237,10 +235,12 @@ fn _write_stream(
 ) -> Result<(), QuinnErrorKind> {
     let mut stream = handle.inner.send_stream(_stream_id(stream_id)?);
 
-    let result = stream.write(unsafe { buffer.as_bytes(buf_len) })?;
+    let bytes = unsafe { buffer.as_bytes(buf_len) };
+    let result = stream.write(bytes)?;
     unsafe {
         written_bytes.init(result);
     }
+    handle.mark_pollable();
 
     Ok(())
 }
@@ -305,6 +305,7 @@ pub mod callbacks {
     static mut ON_DATAGRAM_RECEIVED: Option<extern "C" fn(u32)> = None;
     static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u8)> = None;
     static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
+    static mut ON_CONNECTION_POLLABLE: Option<extern "C" fn(u32)> = None;
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
         unsafe {
@@ -391,6 +392,12 @@ pub mod callbacks {
                 transmit.contents.len(),
                 &addr,
             );
+        }
+    }
+
+    pub(crate) fn on_connection_pollable(con: u32) {
+        unsafe {
+            ON_CONNECTION_POLLABLE.unwrap_unchecked()(con);
         }
     }
 
@@ -482,6 +489,14 @@ pub mod callbacks {
     ) -> QuinnResult {
         unsafe {
             ON_TRANSMIT = Some(cb);
+        }
+        QuinnResult::ok()
+    }
+
+    #[no_mangle]
+    pub(crate) fn set_on_pollable_connection(cb: extern "C" fn(u32)) -> QuinnResult {
+        unsafe {
+            ON_CONNECTION_POLLABLE = Some(cb);
         }
         QuinnResult::ok()
     }

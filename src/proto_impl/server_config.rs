@@ -35,12 +35,12 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, V
 pub extern "cdecl" fn default_server_config(
     mut out_handle: Out<RustlsServerConfigHandle>,
 ) -> QuinnResult {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter("trace")
-            .finish(),
-    )
-    .unwrap();
+    // tracing::subscriber::set_global_default(
+    //     tracing_subscriber::FmtSubscriber::builder()
+    //         .with_env_filter("trace")
+    //         .finish(),
+    // )
+    // .unwrap();
 
     let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
 

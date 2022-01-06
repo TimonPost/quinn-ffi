@@ -27,6 +27,7 @@ fn error() -> QuinnResult {
     QuinnResult::err().context(error)
 }
 
+pub type RustlsClientConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ClientConfig>;
 pub type RustlsServerConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ServerConfig>;
 pub type EndpointHandle<'a> = HandleSync<'a, Mutex<EndpointInner>>;
 pub type ConnectionHandle<'a> = HandleExclusive<'a, ConnectionInner>;
