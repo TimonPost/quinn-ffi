@@ -19,6 +19,11 @@ use std::ffi::CString;
 mod ffi;
 mod proto_impl;
 
+#[no_mangle]
+pub extern "cdecl" fn add(a: u32, b: u32) -> u32{
+    return a + b;
+}
+
 fn error() -> QuinnResult {
     let error = QuinnError {
         code: u64::MAX,

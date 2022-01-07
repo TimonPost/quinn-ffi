@@ -1,28 +1,20 @@
-use crate::{
-    error,
-    ffi::{
-        Out,
-        QuinnError,
-        QuinnResult,
-        Ref,
-    },
-    proto::{
-        DatagramEvent,
-        Dir,
-        Endpoint,
-        EndpointConfig,
-        StreamId,
-    },
-    proto_impl::{
-        ConnectionInner,
-        EndpointInner,
-        IpAddr,
-        QuinnErrorKind,
-    },
-    ConnectionHandle,
-    EndpointHandle,
-    RustlsServerConfigHandle,
-};
+use crate::{error, ffi::{
+    Out,
+    QuinnError,
+    QuinnResult,
+    Ref,
+}, proto::{
+    DatagramEvent,
+    Dir,
+    Endpoint,
+    EndpointConfig,
+    StreamId,
+}, proto_impl::{
+    ConnectionInner,
+    EndpointInner,
+    IpAddr,
+    QuinnErrorKind,
+}, ConnectionHandle, EndpointHandle, RustlsServerConfigHandle, RustlsClientConfigHandle};
 use bytes::BytesMut;
 use libc::size_t;
 use quinn_proto::{
@@ -56,6 +48,45 @@ pub extern "cdecl" fn create_server_endpoint(
     unsafe {
         endpoint_id.init(endpoint.id);
         endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint)))
+    }
+
+    QuinnResult::ok()
+}
+
+#[no_mangle]
+pub extern "cdecl" fn create_client_endpoint(
+    handle: RustlsClientConfigHandle,
+    mut endpoint_id: Out<u8>,
+    mut endpoint_handle: Out<EndpointHandle>,
+) -> QuinnResult {
+    let endpoint_config = Arc::new(EndpointConfig::default());
+    let client_config = handle.clone();
+
+    let mut proto_endpoint = Endpoint::new(endpoint_config, None);
+    let mut endpoint = EndpointInner::new(proto_endpoint);
+    endpoint.set_default_client_config(client_config);
+
+    unsafe {
+        endpoint_id.init(endpoint.id);
+        endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint)))
+    }
+
+    QuinnResult::ok()
+}
+
+#[no_mangle]
+pub extern "cdecl" fn connect_client(
+    handle: EndpointHandle,
+    address: IpAddr,
+    mut out_connection: Out<ConnectionHandle>,
+    mut out_connection_id: Out<u32>
+) -> QuinnResult {
+    let mut endpoint = handle.lock().unwrap();
+    let connection = endpoint.connect(address.into(), "localhost").unwrap();
+
+    unsafe {
+        out_connection_id.init(connection.connection_handle.0 as u32);
+        out_connection.init(ConnectionHandle::alloc(connection))
     }
 
     QuinnResult::ok()
@@ -202,9 +233,7 @@ fn _read_stream(
 
             let written = buffer.write(&chunk.bytes)?;
 
-            unsafe {
-                actual_message_len.init(written);
-            }
+            actual_message_len.init(written);
         }
     }
 

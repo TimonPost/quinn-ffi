@@ -2,7 +2,7 @@ mod addr;
 mod connection;
 mod endpoint;
 mod result;
-mod server_config;
+mod config;
 
 pub use addr::IpAddr;
 pub use connection::{
@@ -14,7 +14,7 @@ pub use endpoint::{
     EndpointInner,
 };
 pub use result::QuinnErrorKind;
-pub use server_config::{
+pub use config::{
     default_server_config,
     generate_self_signed_cert,
 };

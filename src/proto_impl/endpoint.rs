@@ -20,6 +20,8 @@ use std::{
         mpsc,
     },
 };
+use crate::proto::{ClientConfig, ConnectError};
+use std::net::SocketAddr;
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
@@ -42,6 +44,7 @@ pub struct EndpointInner {
     endpoint_events_rx: mpsc::Receiver<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_events_tx: mpsc::Sender<(proto::ConnectionHandle, EndpointEvent)>,
     pub id: u8,
+    default_client_config: Option<ClientConfig>
 }
 
 impl EndpointInner {
@@ -56,6 +59,7 @@ impl EndpointInner {
             endpoint_events_tx: tx,
             endpoint_events_rx: rx,
             id,
+            default_client_config: None
         }
     }
 
@@ -132,5 +136,43 @@ impl EndpointInner {
         }
 
         return Ok(true);
+    }
+
+    /// Set the client configuration used by `connect`
+    pub fn set_default_client_config(&mut self, config: ClientConfig) {
+        self.default_client_config = Some(config);
+    }
+
+    /// Connect to a remote endpoint
+    ///
+    /// `server_name` must be covered by the certificate presented by the server. This prevents a
+    /// connection from being intercepted by an attacker with a valid certificate for some other
+    /// server.
+    ///
+    /// May fail immediately due to configuration errors, or in the future if the connection could
+    /// not be established.
+    pub fn connect(&mut self, addr: SocketAddr, server_name: &str) -> Result<ConnectionInner, ConnectError> {
+        let config = match &self.default_client_config {
+            Some(config) => config.clone(),
+            None => return Err(ConnectError::NoDefaultClientConfig),
+        };
+
+        self.connect_with(config, addr, server_name)
+    }
+
+    /// Connect to a remote endpoint using a custom configuration.
+    ///
+    /// See [`connect()`] for details.
+    ///
+    /// [`connect()`]: Endpoint::connect
+    pub fn connect_with(
+        &mut self,
+        config: ClientConfig,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<ConnectionInner, ConnectError> {
+        let (ch, conn) = self.inner.connect(config, addr, server_name)?;
+
+        Ok(self.add_connection(ch, conn))
     }
 }

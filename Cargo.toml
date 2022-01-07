@@ -5,13 +5,13 @@ edition = "2018"
 
 [lib]
 name="quinn_ffi"
-crate-type = ["dylib"]
+crate-type = ["cdylib","staticlib"]
 
 [dependencies]
 quinn-proto = {path="../../quinn/quinn-proto", version="0.8.0", features=["rustls"]}
 lazy_static = "1.4.0"
 libc = "0.2.112"
-rustls = { version = "0.20", default-features = false, features = ["quic"] }
+rustls = { version = "0.20", default-features = false, features = ["quic", "dangerous_configuration"]}
 rcgen = "0.8.14"
 bytes="1.1.0"
 tracing = "0.1.29"
