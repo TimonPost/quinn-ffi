@@ -1,21 +1,36 @@
-use crate::{ffi::bindings::callbacks, proto, proto_impl::connection::{
-    ConnectionEvent,
-    ConnectionInner,
-}, EndpointHandle};
+use crate::{
+    ffi::bindings::callbacks,
+    proto,
+    proto_impl::connection::{
+        ConnectionEvent,
+        ConnectionInner,
+    },
+    EndpointHandle,
+};
 
 use quinn_proto::Transmit;
 
-use crate::proto_impl::QuinnErrorKind;
-use std::{collections::HashMap, sync::{
-    atomic::{
-        AtomicU8,
-        Ordering,
+use crate::{
+    proto::{
+        ClientConfig,
+        ConnectError,
     },
-    mpsc,
-}, thread};
-use crate::proto::{ClientConfig, ConnectError};
-use std::net::SocketAddr;
-use std::sync::{Mutex, Arc};
+    proto_impl::QuinnErrorKind,
+};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        atomic::{
+            AtomicU8,
+            Ordering,
+        },
+        mpsc,
+        Arc,
+        Mutex,
+    },
+    thread,
+};
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
@@ -34,26 +49,27 @@ pub enum EndpointEvent {
 
 pub struct EndpointPoller {
     receiver: mpsc::Receiver<u8>,
-    endpoint_ref: Arc<Mutex<EndpointInner>>
+    endpoint_ref: Arc<Mutex<EndpointInner>>,
 }
 
 impl EndpointPoller {
     pub fn new(endpoint_ref: Arc<Mutex<EndpointInner>>) -> (Self, mpsc::Sender<u8>) {
         let (sender, receiver) = mpsc::channel();
-        (EndpointPoller {
-            endpoint_ref,
-            receiver
-        }, sender)
+        (
+            EndpointPoller {
+                endpoint_ref,
+                receiver,
+            },
+            sender,
+        )
     }
 
     pub fn start_polling(mut self) {
-        thread::spawn(move || {
-            loop {
-                let _ = self.receiver.recv();
+        thread::spawn(move || loop {
+            let _ = self.receiver.recv();
 
-                let mut endpoint = self.endpoint_ref.lock().unwrap();
-                endpoint.poll()
-            }
+            let mut endpoint = self.endpoint_ref.lock().unwrap();
+            endpoint.poll()
         });
     }
 }
@@ -65,24 +81,23 @@ pub struct EndpointInner {
     endpoint_events_tx: mpsc::Sender<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_poll_notifier: Option<mpsc::Sender<u8>>,
     pub id: u8,
-    default_client_config: Option<ClientConfig>
+    default_client_config: Option<ClientConfig>,
 }
 
 impl EndpointInner {
     pub fn new(endpoint: proto::Endpoint) -> Self {
         let (tx, rx) = mpsc::channel();
 
-
         let id = ENDPOINT_ID.load(Ordering::Relaxed).wrapping_add(1);
 
-       return EndpointInner {
+        return EndpointInner {
             inner: endpoint,
             connections: HashMap::new(),
             endpoint_events_tx: tx,
             endpoint_events_rx: rx,
             endpoint_poll_notifier: None,
             id,
-            default_client_config: None
+            default_client_config: None,
         };
     }
 
@@ -112,7 +127,13 @@ impl EndpointInner {
         let (send, recv) = mpsc::channel();
         let _ = self.connections.insert(handle, send);
 
-        ConnectionInner::new(connection, handle, recv, self.endpoint_events_tx.clone(), self.endpoint_poll_notifier.clone().unwrap())
+        ConnectionInner::new(
+            connection,
+            handle,
+            recv,
+            self.endpoint_events_tx.clone(),
+            self.endpoint_poll_notifier.clone().unwrap(),
+        )
     }
 
     pub fn forward_event_to_connection(
@@ -178,7 +199,11 @@ impl EndpointInner {
     ///
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
-    pub fn connect(&mut self, addr: SocketAddr, server_name: &str) -> Result<ConnectionInner, ConnectError> {
+    pub fn connect(
+        &mut self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<ConnectionInner, ConnectError> {
         let config = match &self.default_client_config {
             Some(config) => config.clone(),
             None => return Err(ConnectError::NoDefaultClientConfig),

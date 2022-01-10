@@ -7,7 +7,10 @@ use crate::ffi::{
     QuinnError,
     QuinnResult,
 };
-use std::sync::{Mutex, Arc};
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 use crate::proto_impl::{
     ConnectionInner,
@@ -20,7 +23,7 @@ mod ffi;
 mod proto_impl;
 
 #[no_mangle]
-pub extern "cdecl" fn add(a: u32, b: u32) -> u32{
+pub extern "cdecl" fn add(a: u32, b: u32) -> u32 {
     return a + b;
 }
 

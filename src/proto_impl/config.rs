@@ -1,20 +1,30 @@
-use crate::{ffi::{
-    Out,
-    QuinnResult,
-}, RustlsServerConfigHandle, RustlsClientConfigHandle};
+use crate::{
+    ffi::{
+        Out,
+        QuinnResult,
+    },
+    RustlsClientConfigHandle,
+    RustlsServerConfigHandle,
+};
 use rustls::{
+    client::{
+        ServerCertVerified,
+        ServerCertVerifier,
+    },
     Certificate,
     KeyLogFile,
     PrivateKey,
     RootCertStore,
-    client::{ServerCertVerified, ServerCertVerifier}
 };
 use std::{
     fs,
     sync::Arc,
 };
 
-use crate::proto::{ServerConfig, ClientConfig};
+use crate::proto::{
+    ClientConfig,
+    ServerConfig,
+};
 
 pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, Vec<u8>) {
     // Generate dummy certificate.
@@ -75,7 +85,11 @@ pub extern "cdecl" fn default_client_config(
 
     crypto.key_log = Arc::new(KeyLogFile::new());
 
-    unsafe { out_handle.init(RustlsClientConfigHandle::alloc(ClientConfig::new(Arc::new(crypto)))); }
+    unsafe {
+        out_handle.init(RustlsClientConfigHandle::alloc(ClientConfig::new(
+            Arc::new(crypto),
+        )));
+    }
 
     QuinnResult::ok()
 }
@@ -94,7 +108,7 @@ impl ServerCertVerifier for SkipServerVerification {
         _end_entity: &rustls::Certificate,
         _intermediates: &[rustls::Certificate],
         _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item=&[u8]>,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: std::time::SystemTime,
     ) -> Result<ServerCertVerified, rustls::Error> {

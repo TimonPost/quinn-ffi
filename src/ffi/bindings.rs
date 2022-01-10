@@ -1,36 +1,54 @@
-use crate::{error, ffi::{
-    Out,
-    QuinnError,
-    QuinnResult,
-    Ref,
-}, proto::{
-    DatagramEvent,
-    Dir,
-    Endpoint,
-    EndpointConfig,
-    StreamId,
-}, proto_impl::{
-    ConnectionInner,
-    EndpointInner,
-    IpAddr,
-    QuinnErrorKind,
-}, ConnectionHandle, EndpointHandle, RustlsServerConfigHandle, RustlsClientConfigHandle};
+use crate::{
+    error,
+    ffi::{
+        Kind,
+        Out,
+        QuinnError,
+        QuinnResult,
+        Ref,
+    },
+    proto::{
+        Chunk,
+        DatagramEvent,
+        Dir,
+        Endpoint,
+        EndpointConfig,
+        ReadError,
+        StreamId,
+    },
+    proto_impl::{
+        ConnectionInner,
+        EndpointInner,
+        EndpointPoller,
+        IpAddr,
+        QuinnErrorKind,
+    },
+    ConnectionHandle,
+    EndpointHandle,
+    RustlsClientConfigHandle,
+    RustlsServerConfigHandle,
+};
 use bytes::BytesMut;
 use libc::size_t;
 use quinn_proto::{
     VarInt,
     VarIntBoundsExceeded,
 };
-use std::{io::Write, net::SocketAddr, sync::{
-    Arc,
-    Mutex,
-}, time::Instant, thread};
+use std::{
+    io::Write,
+    net::SocketAddr,
+    sync::{
+        mpsc,
+        Arc,
+        Mutex,
+    },
+    thread,
+    time::{
+        Duration,
+        Instant,
+    },
+};
 use Into;
-use crate::proto::{ReadError, Chunk};
-use crate::ffi::Kind;
-use std::time::Duration;
-use std::sync::mpsc;
-use crate::proto_impl::EndpointPoller;
 
 /// ===== Endpoint API'S ======
 
@@ -102,7 +120,7 @@ pub extern "cdecl" fn connect_client(
     handle: EndpointHandle,
     address: IpAddr,
     mut out_connection: Out<ConnectionHandle>,
-    mut out_connection_id: Out<u32>
+    mut out_connection_id: Out<u32>,
 ) -> QuinnResult {
     let mut endpoint = handle.lock().unwrap();
     let connection = endpoint.connect(address.into(), "localhost").unwrap();
@@ -235,7 +253,8 @@ pub extern "cdecl" fn read_stream(
         message_buf,
         message_buf_len,
         actual_message_len,
-    ).into()
+    )
+    .into()
 }
 
 fn _read_stream(
@@ -250,24 +269,22 @@ fn _read_stream(
     let mut result = stream.read(true)?;
 
     match result.next(message_buf_len) {
-        Ok(Some(chunk)) => {
-            unsafe {
-                let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+        Ok(Some(chunk)) => unsafe {
+            let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
 
-                let written = buffer.write(&chunk.bytes)?;
+            let written = buffer.write(&chunk.bytes)?;
 
-                actual_message_len.init(written);
-            }
-        }
+            actual_message_len.init(written);
+        },
         Err(e) => {
             if result.finalize().should_transmit() {
                 handle.mark_pollable();
             }
-            if e==ReadError::Blocked {
+            if e == ReadError::Blocked {
                 return Err(QuinnErrorKind::QuinErrorKind(Kind::BufferBlocked));
             }
 
-            return Err(e.into())
+            return Err(e.into());
         }
         _ => {}
     }

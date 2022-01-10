@@ -37,7 +37,7 @@ pub struct ConnectionInner {
 
     timer_deadline: Option<Instant>,
     last_poll: Instant,
-    pub endpoint_poll_notifier: Sender<u8>
+    pub endpoint_poll_notifier: Sender<u8>,
 }
 
 impl ConnectionInner {
@@ -57,7 +57,7 @@ impl ConnectionInner {
             handle_event_called: false,
             timer_deadline: None,
             last_poll: Instant::now(),
-            endpoint_poll_notifier
+            endpoint_poll_notifier,
         }
     }
 }
