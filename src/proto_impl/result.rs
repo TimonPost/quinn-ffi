@@ -19,6 +19,7 @@ use std::{
         TryRecvError,
     },
 };
+use crate::ffi::{QuinnResult, Kind};
 
 #[doc(hidden)]
 #[macro_export]
@@ -34,6 +35,7 @@ macro_rules! impl_error {
 
 #[derive(Debug)]
 pub enum QuinnErrorKind {
+    QuinErrorKind(Kind),
     QuinnError { code: u32, reason: String },
     FFIError,
     IoError(io::Error),
@@ -48,7 +50,8 @@ impl fmt::Display for QuinnErrorKind {
                 write!(f, "QuinnError Error; code: {} reason: {}", code, reason)
             }
             QuinnErrorKind::FFIError => write!(f, "Error occurred in the FFI layer"),
-            QuinnErrorKind::IoError(err) => write!(f, "Error Occurred: {}", err.to_string()),
+            QuinnErrorKind::IoError(err) => write!(f, "Io Error Occurred: {}", err.to_string()),
+            QuinnErrorKind::QuinErrorKind(kind) => {write!(f, "Quinn error kind Occurred: {:?}", kind)}
         }
     }
 }
@@ -63,6 +66,7 @@ impl_error!(ReadError);
 impl_error!(WriteError);
 impl_error!(ReadableError);
 impl_error!(VarIntBoundsExceeded);
+
 
 impl<T> From<SendError<T>> for QuinnErrorKind {
     fn from(error: SendError<T>) -> Self {

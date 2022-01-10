@@ -1,27 +1,21 @@
-use crate::{
-    ffi::bindings::callbacks,
-    proto,
-    proto_impl::connection::{
-        ConnectionEvent,
-        ConnectionInner,
-    },
-};
+use crate::{ffi::bindings::callbacks, proto, proto_impl::connection::{
+    ConnectionEvent,
+    ConnectionInner,
+}, EndpointHandle};
 
 use quinn_proto::Transmit;
 
 use crate::proto_impl::QuinnErrorKind;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{
-            AtomicU8,
-            Ordering,
-        },
-        mpsc,
+use std::{collections::HashMap, sync::{
+    atomic::{
+        AtomicU8,
+        Ordering,
     },
-};
+    mpsc,
+}, thread};
 use crate::proto::{ClientConfig, ConnectError};
 use std::net::SocketAddr;
+use std::sync::{Mutex, Arc};
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
@@ -38,11 +32,38 @@ pub enum EndpointEvent {
     Transmit(proto::Transmit),
 }
 
+pub struct EndpointPoller {
+    receiver: mpsc::Receiver<u8>,
+    endpoint_ref: Arc<Mutex<EndpointInner>>
+}
+
+impl EndpointPoller {
+    pub fn new(endpoint_ref: Arc<Mutex<EndpointInner>>) -> (Self, mpsc::Sender<u8>) {
+        let (sender, receiver) = mpsc::channel();
+        (EndpointPoller {
+            endpoint_ref,
+            receiver
+        }, sender)
+    }
+
+    pub fn start_polling(mut self) {
+        thread::spawn(move || {
+            loop {
+                let _ = self.receiver.recv();
+
+                let mut endpoint = self.endpoint_ref.lock().unwrap();
+                endpoint.poll()
+            }
+        });
+    }
+}
+
 pub struct EndpointInner {
     pub(crate) inner: proto::Endpoint,
     connections: HashMap<proto::ConnectionHandle, mpsc::Sender<ConnectionEvent>>,
     endpoint_events_rx: mpsc::Receiver<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_events_tx: mpsc::Sender<(proto::ConnectionHandle, EndpointEvent)>,
+    endpoint_poll_notifier: Option<mpsc::Sender<u8>>,
     pub id: u8,
     default_client_config: Option<ClientConfig>
 }
@@ -51,16 +72,22 @@ impl EndpointInner {
     pub fn new(endpoint: proto::Endpoint) -> Self {
         let (tx, rx) = mpsc::channel();
 
+
         let id = ENDPOINT_ID.load(Ordering::Relaxed).wrapping_add(1);
 
-        EndpointInner {
+       return EndpointInner {
             inner: endpoint,
             connections: HashMap::new(),
             endpoint_events_tx: tx,
             endpoint_events_rx: rx,
+            endpoint_poll_notifier: None,
             id,
             default_client_config: None
-        }
+        };
+    }
+
+    pub fn set_poll_notifier(&mut self, notifer: mpsc::Sender<u8>) {
+        self.endpoint_poll_notifier = Some(notifer)
     }
 
     pub fn poll(&mut self) {
@@ -85,7 +112,7 @@ impl EndpointInner {
         let (send, recv) = mpsc::channel();
         let _ = self.connections.insert(handle, send);
 
-        ConnectionInner::new(connection, handle, recv, self.endpoint_events_tx.clone())
+        ConnectionInner::new(connection, handle, recv, self.endpoint_events_tx.clone(), self.endpoint_poll_notifier.clone().unwrap())
     }
 
     pub fn forward_event_to_connection(

@@ -12,6 +12,7 @@ pub use connection::{
 pub use endpoint::{
     EndpointEvent,
     EndpointInner,
+    EndpointPoller
 };
 pub use result::QuinnErrorKind;
 pub use config::{

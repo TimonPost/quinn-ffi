@@ -1,8 +1,8 @@
 use std::{
     cell::RefCell,
-    error::Error,
     ffi::CString,
 };
+use crate::proto_impl::QuinnErrorKind;
 
 thread_local!(
     static LAST_RESULT: RefCell<Option<LastResult>> = RefCell::new(None);
@@ -36,6 +36,10 @@ impl QuinnResult {
         QuinnResult::new(Kind::BufferToSmall)
     }
 
+    pub fn buffer_blocked() -> Self {
+        QuinnResult::new(Kind::BufferBlocked)
+    }
+
     pub fn context(self, e: QuinnError) -> Self {
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
@@ -62,11 +66,23 @@ impl QuinnResult {
     }
 }
 
-impl<T, E: Error> From<Result<T, E>> for QuinnResult {
-    fn from(result: Result<T, E>) -> Self {
+impl<T> From<Result<T, QuinnErrorKind>> for QuinnResult {
+    fn from(result: Result<T, QuinnErrorKind>) -> Self {
         match result {
-            Ok(_) => QuinnResult::ok(),
-            Err(e) => QuinnResult::err().context(QuinnError::new(0, e.to_string())),
+            Ok(kind) => QuinnResult::ok(),
+            Err(e) => {
+                match e   {
+                    QuinnErrorKind::QuinErrorKind(kind) => {
+                        match kind {
+                            Kind::Ok => QuinnResult::ok(),
+                            Kind::Error => QuinnResult::err(),
+                            Kind::BufferToSmall => QuinnResult::buffer_too_small(),
+                            Kind::BufferBlocked => QuinnResult::buffer_blocked()
+                        }
+                    }
+                    e =>  QuinnResult::err().context(QuinnError::new(0, e.to_string())),
+                }
+            }
         }
     }
 }
@@ -83,6 +99,7 @@ pub enum Kind {
     Ok,
     Error,
     BufferToSmall,
+    BufferBlocked
 }
 
 #[repr(C)]

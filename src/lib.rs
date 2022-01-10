@@ -7,7 +7,7 @@ use crate::ffi::{
     QuinnError,
     QuinnResult,
 };
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 
 use crate::proto_impl::{
     ConnectionInner,
@@ -34,5 +34,5 @@ fn error() -> QuinnResult {
 
 pub type RustlsClientConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ClientConfig>;
 pub type RustlsServerConfigHandle<'a> = HandleExclusive<'a, quinn_proto::ServerConfig>;
-pub type EndpointHandle<'a> = HandleSync<'a, Mutex<EndpointInner>>;
+pub type EndpointHandle<'a> = HandleSync<'a, Arc<Mutex<EndpointInner>>>;
 pub type ConnectionHandle<'a> = HandleExclusive<'a, ConnectionInner>;

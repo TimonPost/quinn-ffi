@@ -37,6 +37,7 @@ pub struct ConnectionInner {
 
     timer_deadline: Option<Instant>,
     last_poll: Instant,
+    pub endpoint_poll_notifier: Sender<u8>
 }
 
 impl ConnectionInner {
@@ -45,6 +46,7 @@ impl ConnectionInner {
         handle: proto::ConnectionHandle,
         recv: mpsc::Receiver<ConnectionEvent>,
         endpoint_events_tx: Sender<(proto::ConnectionHandle, EndpointEvent)>,
+        endpoint_poll_notifier: Sender<u8>,
     ) -> ConnectionInner {
         ConnectionInner {
             inner: connection,
@@ -55,6 +57,7 @@ impl ConnectionInner {
             handle_event_called: false,
             timer_deadline: None,
             last_poll: Instant::now(),
+            endpoint_poll_notifier
         }
     }
 }
@@ -110,6 +113,7 @@ impl ConnectionInner {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Transmit(t)))?;
 
+            self.endpoint_poll_notifier.send(0);
             // TODO: when max transmits return true.
         }
 
@@ -120,6 +124,7 @@ impl ConnectionInner {
         if let Some(event) = self.inner.poll_endpoint_events() {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Proto(event)))?;
+            self.endpoint_poll_notifier.send(0);
         }
         Ok(())
     }

@@ -21,33 +21,45 @@ use quinn_proto::{
     VarInt,
     VarIntBoundsExceeded,
 };
-use std::{
-    io::Write,
-    net::SocketAddr,
-    sync::{
-        Arc,
-        Mutex,
-    },
-    time::Instant,
-};
+use std::{io::Write, net::SocketAddr, sync::{
+    Arc,
+    Mutex,
+}, time::Instant, thread};
 use Into;
+use crate::proto::{ReadError, Chunk};
+use crate::ffi::Kind;
+use std::time::Duration;
+use std::sync::mpsc;
+use crate::proto_impl::EndpointPoller;
 
 /// ===== Endpoint API'S ======
 
 #[no_mangle]
 pub extern "cdecl" fn create_server_endpoint(
     handle: RustlsServerConfigHandle,
-    mut endpoint_id: Out<u8>,
-    mut endpoint_handle: Out<EndpointHandle>,
+    mut out_endpoint_id: Out<u8>,
+    mut out_endpoint_handle: Out<EndpointHandle>,
 ) -> QuinnResult {
     let endpoint_config = Arc::new(EndpointConfig::default());
     let server_config = handle.clone();
 
-    let proto_endpoint = Endpoint::new(endpoint_config, Some(Arc::from(server_config)));
-    let endpoint = EndpointInner::new(proto_endpoint);
+    let endpoint = Endpoint::new(endpoint_config, Some(Arc::from(server_config)));
+    let endpoint = EndpointInner::new(endpoint);
+    let endpoint_id = endpoint.id;
+    let endpoint = Arc::new(Mutex::new(endpoint));
+
+    let endpoint_handle = EndpointHandle::alloc(endpoint.clone());
+
+    let (poller, poll_notifier) = EndpointPoller::new(endpoint.clone());
+    poller.start_polling();
+
+    let mut endpoint_lock = endpoint_handle.lock().unwrap();
+    endpoint_lock.set_poll_notifier(poll_notifier);
+    drop(endpoint_lock);
+
     unsafe {
-        endpoint_id.init(endpoint.id);
-        endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint)))
+        out_endpoint_id.init(endpoint_id);
+        out_endpoint_handle.init(endpoint_handle)
     }
 
     QuinnResult::ok()
@@ -66,9 +78,20 @@ pub extern "cdecl" fn create_client_endpoint(
     let mut endpoint = EndpointInner::new(proto_endpoint);
     endpoint.set_default_client_config(client_config);
 
+    let endpoint_identifier = endpoint.id;
+
+    let shared_ref = Arc::new(Mutex::new(endpoint));
+    let endpoint = EndpointHandle::alloc(shared_ref.clone());
+
+    let (poller, poll_notifier) = EndpointPoller::new(shared_ref.clone());
+    poller.start_polling();
+
+    let mut endpoint_lock = shared_ref.lock().unwrap();
+    endpoint_lock.set_poll_notifier(poll_notifier);
+
     unsafe {
-        endpoint_id.init(endpoint.id);
-        endpoint_handle.init(EndpointHandle::alloc(Mutex::new(endpoint)))
+        endpoint_id.init(endpoint_identifier);
+        endpoint_handle.init(endpoint)
     }
 
     QuinnResult::ok()
@@ -212,8 +235,7 @@ pub extern "cdecl" fn read_stream(
         message_buf,
         message_buf_len,
         actual_message_len,
-    )
-    .into()
+    ).into()
 }
 
 fn _read_stream(
@@ -227,14 +249,27 @@ fn _read_stream(
 
     let mut result = stream.read(true)?;
 
-    if let Some(chunk) = result.next(message_buf_len)? {
-        unsafe {
-            let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+    match result.next(message_buf_len) {
+        Ok(Some(chunk)) => {
+            unsafe {
+                let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
 
-            let written = buffer.write(&chunk.bytes)?;
+                let written = buffer.write(&chunk.bytes)?;
 
-            actual_message_len.init(written);
+                actual_message_len.init(written);
+            }
         }
+        Err(e) => {
+            if result.finalize().should_transmit() {
+                handle.mark_pollable();
+            }
+            if e==ReadError::Blocked {
+                return Err(QuinnErrorKind::QuinErrorKind(Kind::BufferBlocked));
+            }
+
+            return Err(e.into())
+        }
+        _ => {}
     }
 
     if result.finalize().should_transmit() {
