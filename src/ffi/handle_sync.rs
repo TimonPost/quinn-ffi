@@ -1,3 +1,4 @@
+use crate::ffi::IsNull;
 use std::{
     marker::PhantomData,
     ops::{
@@ -10,9 +11,7 @@ use std::{
     },
 };
 
-/**
-A handle that can only contain types that are `Sync` + `Send` semantically.
-*/
+/// A handle that can only contain types that are `Sync` + `Send` semantically.
 #[repr(transparent)]
 pub struct HandleSync<'a, T>(*mut T, PhantomData<&'a T>)
 where
@@ -58,7 +57,13 @@ where
     T: ?Sized,
 {
     fn deref_mut(&mut self) -> &mut T {
-        // We own the interior valu
+        // We own the interior value
         unsafe { &mut *self.0 }
+    }
+}
+
+impl<'a, T: ?Sized> IsNull for HandleSync<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }

@@ -1,3 +1,4 @@
+use crate::ffi::IsNull;
 use std::{
     marker::PhantomData,
     panic::{
@@ -41,5 +42,11 @@ impl<'a> Out<'a, u8> {
     // The slice must never be read from and must be valid for the length of the slice
     pub unsafe fn as_uninit_bytes_mut(&mut self, len: usize) -> &mut [u8] {
         slice::from_raw_parts_mut(self.0, len)
+    }
+}
+
+impl<'a, T: ?Sized> IsNull for Out<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }

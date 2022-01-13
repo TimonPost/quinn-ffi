@@ -11,6 +11,7 @@ mod reference;
 mod thread_bound;
 mod transport_config;
 
+use crate::proto_impl::QuinnErrorKind;
 pub use deferred_cleanup::DeferredCleanup;
 pub use handle_exclusive::HandleExclusive;
 pub use handle_shared::HandleShared;
@@ -26,3 +27,18 @@ pub use reference::{
     Ref,
     RefMut,
 };
+use std::sync::MutexGuard;
+
+pub trait Handle {
+    type Inner;
+
+    fn ref_access(
+        &self,
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
+    ) -> Result<(), QuinnErrorKind>;
+    fn mut_access(
+        &mut self,
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
+    ) -> Result<(), QuinnErrorKind>;
+    fn new(instance: Self::Inner) -> Self;
+}

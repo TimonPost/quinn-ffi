@@ -1,6 +1,8 @@
 use crate::{
     error,
     ffi::{
+        Handle,
+        IsNull,
         Kind,
         Out,
         QuinnError,
@@ -37,6 +39,7 @@ use quinn_proto::{
 use std::{
     io::Write,
     net::SocketAddr,
+    ops::Deref,
     sync::{
         mpsc,
         Arc,
@@ -49,220 +52,227 @@ use std::{
     },
 };
 use Into;
-
 /// ===== Endpoint API'S ======
 
-#[no_mangle]
-pub extern "cdecl" fn create_server_endpoint(
-    handle: RustlsServerConfigHandle,
-    mut out_endpoint_id: Out<u8>,
-    mut out_endpoint_handle: Out<EndpointHandle>,
-) -> QuinnResult {
-    let endpoint_config = Arc::new(EndpointConfig::default());
-    let server_config = handle.clone();
+ffi! {
+    fn create_server_endpoint(handle: RustlsServerConfigHandle, out_endpoint_id: Out<u8>, out_endpoint_handle: Out<EndpointHandle>) -> QuinnResult {
+        let endpoint_config = Arc::new(EndpointConfig::default());
 
-    let endpoint = Endpoint::new(endpoint_config, Some(Arc::from(server_config)));
-    let endpoint = EndpointInner::new(endpoint);
-    let endpoint_id = endpoint.id;
-    let endpoint = Arc::new(Mutex::new(endpoint));
+        let mut endpoint = None;
+        let _ = handle.mut_access(&mut |server_config| {
+           endpoint = Some(Endpoint::new(endpoint_config.clone(), Some(Arc::from(server_config.clone()))));
+           Ok(())
+        });
 
-    let endpoint_handle = EndpointHandle::alloc(endpoint.clone());
+        let endpoint = EndpointInner::new(endpoint.unwrap());
+        let endpoint_id = endpoint.id;
 
-    let (poller, poll_notifier) = EndpointPoller::new(endpoint.clone());
-    poller.start_polling();
+        let endpoint_handle = EndpointHandle::new(endpoint);
 
-    let mut endpoint_lock = endpoint_handle.lock().unwrap();
-    endpoint_lock.set_poll_notifier(poll_notifier);
-    drop(endpoint_lock);
+        let (poller, poll_notifier) = EndpointPoller::new(endpoint_handle.clone());
+        poller.start_polling();
 
-    unsafe {
-        out_endpoint_id.init(endpoint_id);
-        out_endpoint_handle.init(endpoint_handle)
-    }
+        let mut endpoint_lock = endpoint_handle.lock().unwrap();
+        endpoint_lock.set_poll_notifier(poll_notifier);
+        drop(endpoint_lock);
 
-    QuinnResult::ok()
-}
-
-#[no_mangle]
-pub extern "cdecl" fn create_client_endpoint(
-    handle: RustlsClientConfigHandle,
-    mut endpoint_id: Out<u8>,
-    mut endpoint_handle: Out<EndpointHandle>,
-) -> QuinnResult {
-    let endpoint_config = Arc::new(EndpointConfig::default());
-    let client_config = handle.clone();
-
-    let mut proto_endpoint = Endpoint::new(endpoint_config, None);
-    let mut endpoint = EndpointInner::new(proto_endpoint);
-    endpoint.set_default_client_config(client_config);
-
-    let endpoint_identifier = endpoint.id;
-
-    let shared_ref = Arc::new(Mutex::new(endpoint));
-    let endpoint = EndpointHandle::alloc(shared_ref.clone());
-
-    let (poller, poll_notifier) = EndpointPoller::new(shared_ref.clone());
-    poller.start_polling();
-
-    let mut endpoint_lock = shared_ref.lock().unwrap();
-    endpoint_lock.set_poll_notifier(poll_notifier);
-
-    unsafe {
-        endpoint_id.init(endpoint_identifier);
-        endpoint_handle.init(endpoint)
-    }
-
-    QuinnResult::ok()
-}
-
-#[no_mangle]
-pub extern "cdecl" fn connect_client(
-    handle: EndpointHandle,
-    address: IpAddr,
-    mut out_connection: Out<ConnectionHandle>,
-    mut out_connection_id: Out<u32>,
-) -> QuinnResult {
-    let mut endpoint = handle.lock().unwrap();
-    let connection = endpoint.connect(address.into(), "localhost").unwrap();
-
-    unsafe {
-        out_connection_id.init(connection.connection_handle.0 as u32);
-        out_connection.init(ConnectionHandle::alloc(connection))
-    }
-
-    QuinnResult::ok()
-}
-
-#[no_mangle]
-pub extern "cdecl" fn poll_endpoint(handle: EndpointHandle) -> QuinnResult {
-    let mut endpoint = handle.lock().unwrap();
-    endpoint.poll();
-
-    QuinnResult::ok()
-}
-
-#[no_mangle]
-pub extern "cdecl" fn handle_datagram(
-    endpoint_handle: EndpointHandle,
-    data: Ref<u8>,
-    length: size_t,
-    address: IpAddr,
-) -> QuinnResult {
-    let mut endpoint = endpoint_handle.lock().unwrap();
-
-    let slice = unsafe { data.as_bytes(length) };
-
-    let addr: SocketAddr = address.into();
-
-    match endpoint
-        .inner
-        .handle(Instant::now(), addr, None, None, BytesMut::from(slice))
-    {
-        Some((handle, DatagramEvent::NewConnection(conn))) => {
-            let connection = endpoint.add_connection(handle, conn);
-
-            callbacks::on_new_connection(handle.0 as u32, connection);
-            callbacks::on_connection_pollable(handle.0 as u32)
+        unsafe {
+            out_endpoint_id.init(endpoint_id);
+            out_endpoint_handle.init(endpoint_handle);
         }
-        Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-            endpoint.forward_event_to_connection(handle, event).unwrap();
-            callbacks::on_connection_pollable(handle.0 as u32);
-        }
-        None => {
-            println!("None handled");
-        }
+
+        QuinnResult::ok()
     }
 
-    return QuinnResult::ok();
+    fn create_client_endpoint(
+        handle: RustlsClientConfigHandle,
+        endpoint_id: Out<u8>,
+        out_endpoint_handle: Out<EndpointHandle>
+    ) -> QuinnResult {
+        let endpoint_config = Arc::new(EndpointConfig::default());
+
+        let mut proto_endpoint = Endpoint::new(endpoint_config, None);
+        let mut endpoint = EndpointInner::new(proto_endpoint);
+
+        let _ = handle.mut_access(&mut |client_config| {
+          endpoint.set_default_client_config(client_config.clone());
+           Ok(())
+        });
+
+        let endpoint_identifier = endpoint.id;
+
+        let shared_ref = Arc::new(Mutex::new(endpoint));
+        let endpoint = EndpointHandle::alloc(shared_ref.clone());
+
+        let (poller, poll_notifier) = EndpointPoller::new(shared_ref.clone());
+        poller.start_polling();
+
+        let mut endpoint_lock = shared_ref.lock().unwrap();
+        endpoint_lock.set_poll_notifier(poll_notifier);
+
+        unsafe {
+            endpoint_id.init(endpoint_identifier);
+            out_endpoint_handle.init(endpoint)
+        }
+
+        QuinnResult::ok()
+    }
+
+    fn connect_client(
+        handle: EndpointHandle,
+        address: IpAddr,
+        out_connection: Out<ConnectionHandle>,
+        out_connection_id: Out<u32>
+    ) -> QuinnResult {
+        handle.mut_access(&mut |endpoint| {
+            let connection = endpoint.connect(address.into(), "localhost").unwrap();
+
+            unsafe {
+                out_connection_id.init(connection.connection_handle.0 as u32);
+                out_connection.init(ConnectionHandle::new(connection))
+            }
+           Ok(())
+       }).into()
+    }
+
+    fn poll_endpoint(handle: EndpointHandle) -> QuinnResult {
+       handle.mut_access(&mut |endpoint| {
+            endpoint.poll();
+            Ok(())
+       }).into()
+    }
+
+    fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> QuinnResult {
+        handle.mut_access(&mut |endpoint| {
+            let slice = unsafe { data.as_bytes(length) };
+
+            let addr: SocketAddr = address.into();
+
+            match endpoint
+                .inner
+                .handle(Instant::now(), addr, None, None, BytesMut::from(slice))
+            {
+                Some((handle, DatagramEvent::NewConnection(conn))) => {
+                    let connection = endpoint.add_connection(handle, conn);
+
+                    callbacks::on_new_connection(handle.0 as u32, connection);
+                    callbacks::on_connection_pollable(handle.0 as u32)
+                }
+                Some((handle, DatagramEvent::ConnectionEvent(event))) => {
+                    endpoint.forward_event_to_connection(handle, event)?;
+                    callbacks::on_connection_pollable(handle.0 as u32);
+                }
+                None => {
+                    println!("None handled");
+                }
+            }
+
+            Ok(())
+        }).into()
+    }
 }
 
 /// ===== Connection API'S ======
 
-#[no_mangle]
-pub extern "cdecl" fn poll_connection(mut handle: ConnectionHandle) -> QuinnResult {
-    handle.poll().into()
+ffi! {
+    fn poll_connection(handle: ConnectionHandle) -> QuinnResult {
+      handle.mut_access(&mut |connection| {
+        let a = connection.poll();
+        a
+      }).into()
+    }
 }
 
 /// ===== Error API'S ======
-#[no_mangle]
-pub extern "cdecl" fn throw_error() -> QuinnResult {
-    error()
-}
+ffi! {
+   fn last_error(message_buf: Out<u8>, message_buf_len: size_t, actual_message_len: Out<size_t>) -> QuinnResult {
+        QuinnResult::with_last_result(|last_result| {
+            if let Some(error_msg) = last_result {
+                let error_as_bytes = error_msg.reason.as_bytes();
 
-#[no_mangle]
-pub extern "cdecl" fn last_error(
-    mut message_buf: Out<u8>,
-    message_buf_len: size_t,
-    mut actual_message_len: Out<size_t>,
-) -> QuinnResult {
-    QuinnResult::with_last_result(|last_result| {
-        if let Some(error_msg) = last_result {
-            let error_as_bytes = error_msg.reason.as_bytes();
+                // "The out pointer is valid and not mutably aliased elsewhere"
+                unsafe {
+                    actual_message_len.init(error_as_bytes.len());
+                }
 
-            // "The out pointer is valid and not mutably aliased elsewhere"
-            unsafe {
-                actual_message_len.init(error_as_bytes.len());
+                if message_buf_len < error_as_bytes.len() {
+                    return QuinnResult::buffer_too_small();
+                }
+
+                // "The buffer is valid for writes and the length is within the buffer"
+                unsafe {
+                    message_buf.init_bytes(error_as_bytes);
+                }
             }
-
-            if message_buf_len < error_as_bytes.len() {
-                return QuinnResult::buffer_too_small();
-            }
-
-            // "The buffer is valid for writes and the length is within the buffer"
-            unsafe {
-                message_buf.init_bytes(error_as_bytes);
-            }
-        }
-        QuinnResult::ok()
-    })
+            QuinnResult::ok()
+        })
+    }
 }
 
 /// ===== Stream API'S ======
 
-#[no_mangle]
-pub extern "cdecl" fn accept_stream(
-    mut handle: ConnectionHandle,
-    stream_direction: u8,
-    mut stream_id_out: Out<u64>,
-) -> QuinnResult {
-    let dir = dir_from_u8(stream_direction);
+ffi! {
+    fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> QuinnResult {
+        let dir = dir_from_u8(stream_direction);
+        println!("before mut access: {}", dir);
+        handle.mut_access(&mut |connection| {
+            println!("before accepting");
+           let result = if let Some(stream_id) = connection.inner.streams().accept(dir) {
+             println!("before pollable");
+                connection.mark_pollable();
+                  println!("before init");
+                unsafe {
+                    stream_id_out.init(VarInt::from(stream_id).into());
+                }
+                Ok(())
+            } else {
+                Err(QuinnErrorKind::QuinnError {code: 0, reason: "No stream to accept!".to_string()})
+            };
 
-    if let Some(stream_id) = handle.inner.streams().accept(dir) {
-        handle.mark_pollable();
+            println!("after mut access: {:?}", result);
+            result
+        }).into()
 
-        unsafe {
-            stream_id_out.init(VarInt::from(stream_id).into());
-        }
-        QuinnResult::ok()
-    } else {
-        QuinnResult::err().context(QuinnError::new(0, "No stream to accept!".to_string()))
     }
-}
 
-#[no_mangle]
-pub extern "cdecl" fn read_stream(
-    mut handle: ConnectionHandle,
-    stream_id: u64,
-    message_buf: Out<u8>,
-    message_buf_len: size_t,
-    actual_message_len: Out<size_t>,
-) -> QuinnResult {
-    _read_stream(
-        &mut handle,
-        stream_id,
-        message_buf,
-        message_buf_len,
-        actual_message_len,
-    )
-    .into()
+    fn read_stream(handle: ConnectionHandle,stream_id: u64,message_buf: Out<u8>,message_buf_len: size_t, actual_message_len: Out<size_t>) -> QuinnResult {
+         handle.mut_access(&mut |connection| {
+            _read_stream(
+                connection,
+                stream_id,
+                &mut message_buf,
+                message_buf_len,
+                &mut actual_message_len,
+            )
+        }).into()
+    }
+
+    fn write_stream(handle: ConnectionHandle,stream_id: u64,buffer: Ref<u8>,buf_len: size_t,written_bytes: Out<size_t>) -> QuinnResult {
+        handle.mut_access(&mut move |connection| {
+            _write_stream(connection, stream_id, &mut buffer, buf_len, &mut written_bytes).into()
+        }).into()
+    }
+
+    fn open_stream(handle: ConnectionHandle,stream_direction: u8,opened_stream_id: Out<u64>) -> QuinnResult {
+        handle.mut_access(&mut move |connection| {
+           let opened_stream = connection.inner.streams().open(dir_from_u8(stream_direction));
+
+            if let Some(stream_id) = opened_stream {
+                unsafe { opened_stream_id.init(_stream_id_to_u64(stream_id)) }
+                Ok(())
+            } else {
+                Err(QuinnErrorKind::QuinnError {code: 0, reason: "Streams in the given direction are currently exhausted".to_string()})
+            }
+        }).into()
+    }
 }
 
 fn _read_stream(
     handle: &mut ConnectionInner,
     stream_id: u64,
-    mut message_buf: Out<u8>,
+    message_buf: &mut Out<u8>,
     message_buf_len: size_t,
-    mut actual_message_len: Out<size_t>,
+    actual_message_len: &mut Out<size_t>,
 ) -> Result<(), QuinnErrorKind> {
     let mut stream = handle.inner.recv_stream(_stream_id(stream_id)?);
 
@@ -296,23 +306,12 @@ fn _read_stream(
     Ok(())
 }
 
-#[no_mangle]
-pub extern "cdecl" fn write_stream(
-    mut handle: ConnectionHandle,
-    stream_id: u64,
-    buffer: Ref<u8>,
-    buf_len: size_t,
-    written_bytes: Out<size_t>,
-) -> QuinnResult {
-    _write_stream(&mut handle, stream_id, buffer, buf_len, written_bytes).into()
-}
-
 fn _write_stream(
     handle: &mut ConnectionInner,
     stream_id: u64,
-    buffer: Ref<u8>,
+    buffer: &mut Ref<u8>,
     buf_len: size_t,
-    mut written_bytes: Out<size_t>,
+    written_bytes: &mut Out<size_t>,
 ) -> Result<(), QuinnErrorKind> {
     let mut stream = handle.inner.send_stream(_stream_id(stream_id)?);
 
@@ -324,22 +323,6 @@ fn _write_stream(
     handle.mark_pollable();
 
     Ok(())
-}
-
-#[no_mangle]
-pub extern "cdecl" fn open_stream(
-    mut handle: ConnectionHandle,
-    stream_direction: u8,
-    mut opened_stream_id: Out<u64>,
-) -> QuinnResult {
-    let opened_stream = handle.inner.streams().open(dir_from_u8(stream_direction));
-
-    if let Some(stream_id) = opened_stream {
-        unsafe { opened_stream_id.init(_stream_id_to_u64(stream_id)) }
-        QuinnResult::ok()
-    } else {
-        QuinnResult::from("Streams in the given direction are currently exhausted")
-    }
 }
 
 fn dir_from_u8(dir: u8) -> Dir {
@@ -360,7 +343,10 @@ fn _stream_id(stream_id: u64) -> Result<StreamId, VarIntBoundsExceeded> {
 
 pub mod callbacks {
     use crate::{
-        ffi::QuinnResult,
+        ffi::{
+            Handle,
+            QuinnResult,
+        },
         proto::{
             Dir,
             StreamId,
@@ -390,7 +376,7 @@ pub mod callbacks {
 
     pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
         unsafe {
-            ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::alloc(handle), con);
+            ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::new(handle), con);
         }
     }
 

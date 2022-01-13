@@ -1,3 +1,4 @@
+use crate::ffi::IsNull;
 use std::{
     net,
     net::{
@@ -8,6 +9,7 @@ use std::{
 };
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct IpAddr {
     port: u16,
     address: [u8; 4],

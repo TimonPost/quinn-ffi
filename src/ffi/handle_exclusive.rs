@@ -1,4 +1,7 @@
-use crate::ffi::thread_bound::ThreadBound;
+use crate::ffi::{
+    thread_bound::ThreadBound,
+    IsNull,
+};
 use std::{
     marker::PhantomData,
     ops::{
@@ -91,5 +94,11 @@ where
     fn deref_mut(&mut self) -> &mut T {
         // We own the interior valu
         unsafe { &mut *(*self.0).get_raw_unchecked() }
+    }
+}
+
+impl<'a, T: ?Sized> IsNull for HandleExclusive<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }

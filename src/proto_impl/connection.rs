@@ -67,14 +67,11 @@ impl ConnectionInner {
         let _ = self.handle_connection_events();
         let mut poll_again = self.handle_transmits()?;
         poll_again |= self.handle_timer();
-
         let _ = self.handle_endpoint_events();
         self.handle_app_events();
-
         if poll_again {
             self.mark_pollable();
         }
-
         Ok(())
     }
 
@@ -169,7 +166,6 @@ impl ConnectionInner {
                     callbacks::on_stream_opened(self.connection_id(), Dir::Uni);
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
-                    println!("opened bi!");
                     callbacks::on_stream_opened(self.connection_id(), Dir::Bi);
                 }
                 DatagramReceived => {

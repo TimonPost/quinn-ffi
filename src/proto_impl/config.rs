@@ -21,10 +21,14 @@ use std::{
     sync::Arc,
 };
 
-use crate::proto::{
-    ClientConfig,
-    ServerConfig,
+use crate::{
+    ffi::Handle,
+    proto::{
+        ClientConfig,
+        ServerConfig,
+    },
 };
+use std::sync::Mutex;
 
 pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, Vec<u8>) {
     // Generate dummy certificate.
@@ -69,7 +73,11 @@ pub extern "cdecl" fn default_server_config(
 
     let config = ServerConfig::with_crypto(Arc::new(config));
 
-    unsafe { out_handle.init(RustlsServerConfigHandle::alloc(ServerConfig::from(config))) }
+    unsafe {
+        out_handle.init(RustlsServerConfigHandle::alloc(Mutex::from(
+            ServerConfig::from(config),
+        )))
+    }
 
     QuinnResult::ok()
 }
@@ -86,9 +94,9 @@ pub extern "cdecl" fn default_client_config(
     crypto.key_log = Arc::new(KeyLogFile::new());
 
     unsafe {
-        out_handle.init(RustlsClientConfigHandle::alloc(ClientConfig::new(
-            Arc::new(crypto),
-        )));
+        out_handle.init(RustlsClientConfigHandle::new(ClientConfig::new(Arc::new(
+            crypto,
+        ))));
     }
 
     QuinnResult::ok()

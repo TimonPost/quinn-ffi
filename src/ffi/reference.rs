@@ -1,3 +1,4 @@
+use crate::ffi::IsNull;
 use std::{
     marker::PhantomData,
     panic::{
@@ -58,5 +59,17 @@ impl<'a> RefMut<'a, u8> {
     // The pointer must be nonnull, the length is correct, and will remain valid
     pub fn as_bytes_mut(&mut self, len: usize) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.0, len) }
+    }
+}
+
+impl<'a, T: ?Sized> IsNull for Ref<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+}
+
+impl<'a, T: ?Sized> IsNull for RefMut<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }

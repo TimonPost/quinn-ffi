@@ -1,3 +1,4 @@
+use crate::ffi::IsNull;
 use std::{
     marker::PhantomData,
     ops::Deref,
@@ -7,11 +8,9 @@ use std::{
     },
 };
 
-/**
-A shared handle that can be accessed concurrently by multiple threads.
-
-The interior value can be treated like `&T`.
-*/
+/// A shared handle that can be accessed concurrently by multiple threads.
+///
+/// The interior value can be treated like `&T`.
 #[repr(transparent)]
 pub struct HandleShared<'a, T: ?Sized>(*const T, PhantomData<&'a T>);
 
@@ -57,5 +56,11 @@ where
     // "We own the interior value"
     fn deref(&self) -> &T {
         unsafe { &*self.0 }
+    }
+}
+
+impl<'a, T: ?Sized + Sync> IsNull for HandleShared<'a, T> {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
     }
 }

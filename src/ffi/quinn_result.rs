@@ -1,7 +1,18 @@
 use crate::proto_impl::QuinnErrorKind;
+use rustls::Error;
 use std::{
+    any::Any,
     cell::RefCell,
     ffi::CString,
+    fmt,
+    fmt::{
+        Display,
+        Formatter,
+    },
+    panic::{
+        catch_unwind,
+        UnwindSafe,
+    },
 };
 
 thread_local!(
@@ -40,6 +51,13 @@ impl QuinnResult {
         QuinnResult::new(Kind::BufferBlocked)
     }
 
+    pub fn argument_null() -> Self {
+        QuinnResult::new(Kind::ArgumentNull)
+    }
+
+    pub fn is_err(&self) -> bool {
+        self.kind != Kind::Ok
+    }
     pub fn context(self, e: QuinnError) -> Self {
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
@@ -64,6 +82,78 @@ impl QuinnResult {
             return f(message);
         })
     }
+
+    pub(super) fn catch(f: impl FnOnce() -> Self + UnwindSafe) -> Self {
+        //println!("before last result");
+        let r = LAST_RESULT.with(|last_result| {
+            //println!("before last result");
+            {
+                *last_result.borrow_mut() = None;
+            }
+            //println!("after borrow last result");
+            return match catch_unwind(f) {
+                Ok(result) => {
+                    if result.is_err() {
+                        let error = QuinnError::new(0, result.to_string());
+
+                        // Always set the last result so it matches what's returned.
+                        // This `Ok` branch doesn't necessarily mean the result is ok,
+                        // only that there wasn't a panic.
+                        let mut ref_mut = last_result.borrow_mut();
+
+                        ref_mut.as_mut().map(|a| {
+                            *a = LastResult { err: Some(error) };
+                        });
+                        println!("result");
+                        return result;
+                    }
+
+                    QuinnResult::ok()
+                }
+                Err(e) => {
+                    println!("err");
+                    let extract_panic =
+                        || extract_panic(&e).map(|s| format!("internal panic with '{}'", s));
+
+                    // Set the last error to the panic message if it's not already set
+                    let mut ref_mut = last_result.borrow_mut();
+
+                    ref_mut.as_mut().map(|a| {
+                        *a = LastResult {
+                            err: Some(QuinnError::new(0, extract_panic().unwrap())),
+                        };
+                    });
+
+                    QuinnResult::err()
+                }
+            };
+        });
+        //println!("after last result: {:?}", r);
+        r
+    }
+}
+
+fn extract_panic(err: &Box<dyn Any + Send + 'static>) -> Option<String> {
+    if let Some(err) = err.downcast_ref::<String>() {
+        Some(err.clone())
+    } else if let Some(err) = err.downcast_ref::<&'static str>() {
+        Some((*err).to_owned())
+    } else {
+        None
+    }
+}
+
+impl Display for QuinnResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        match self.kind {
+            Kind::Ok => write!(f, "Successful")?,
+            Kind::Error => write!(f, "Some error occurred")?,
+            Kind::BufferToSmall => write!(f, "The supplied buffer was to small.")?,
+            Kind::BufferBlocked => write!(f, "There is no data in the buffer to be read.")?,
+            Kind::ArgumentNull => write!(f, "An argument was null.")?,
+        }
+        Ok(())
+    }
 }
 
 impl<T> From<Result<T, QuinnErrorKind>> for QuinnResult {
@@ -76,6 +166,7 @@ impl<T> From<Result<T, QuinnErrorKind>> for QuinnResult {
                     Kind::Error => QuinnResult::err(),
                     Kind::BufferToSmall => QuinnResult::buffer_too_small(),
                     Kind::BufferBlocked => QuinnResult::buffer_blocked(),
+                    Kind::ArgumentNull => QuinnResult::argument_null(),
                 },
                 e => QuinnResult::err().context(QuinnError::new(0, e.to_string())),
             },
@@ -96,6 +187,7 @@ pub enum Kind {
     Error,
     BufferToSmall,
     BufferBlocked,
+    ArgumentNull,
 }
 
 #[repr(C)]

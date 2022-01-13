@@ -40,11 +40,11 @@ impl<T: Send> ThreadBound<T> {
 
 impl<T: ?Sized> ThreadBound<T> {
     fn check(&self) {
-        let _current = get_thread_id();
+        let current = get_thread_id();
 
-        // if self.thread_id != current {
-        //     panic!("attempted to access resource from a different thread");
-        // }
+        if self.thread_id != current {
+            panic!("attempted to access resource from a different thread");
+        }
     }
 
     pub(super) fn get_raw_unchecked(&self) -> *mut T {
