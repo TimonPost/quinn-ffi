@@ -1,8 +1,6 @@
-use crate::{
-    ffi::{
-        Out,
-        QuinnResult,
-    },
+use crate::ffi::{
+    Out,
+    QuinnResult,
     RustlsClientConfigHandle,
     RustlsServerConfigHandle,
 };
@@ -73,11 +71,7 @@ pub extern "cdecl" fn default_server_config(
 
     let config = ServerConfig::with_crypto(Arc::new(config));
 
-    unsafe {
-        out_handle.init(RustlsServerConfigHandle::alloc(Mutex::from(
-            ServerConfig::from(config),
-        )))
-    }
+    unsafe { out_handle.init(RustlsServerConfigHandle::new(ServerConfig::from(config))) }
 
     QuinnResult::ok()
 }

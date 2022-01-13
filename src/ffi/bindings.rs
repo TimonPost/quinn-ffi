@@ -1,11 +1,15 @@
 use crate::{
     ffi::{
+        ConnectionHandle,
+        EndpointHandle,
         Handle,
         Kind,
         Out,
         QuinnError,
         QuinnResult,
         Ref,
+        RustlsClientConfigHandle,
+        RustlsServerConfigHandle,
     },
     proto::{
         DatagramEvent,
@@ -16,16 +20,12 @@ use crate::{
         StreamId,
     },
     proto_impl::{
-        ConnectionInner,
-        EndpointInner,
+        ConnectionImpl,
+        EndpointImpl,
         EndpointPoller,
         IpAddr,
         QuinnErrorKind,
     },
-    ConnectionHandle,
-    EndpointHandle,
-    RustlsClientConfigHandle,
-    RustlsServerConfigHandle,
 };
 use bytes::BytesMut;
 use libc::size_t;
@@ -54,17 +54,18 @@ ffi! {
            Ok(())
         });
 
-        let endpoint = EndpointInner::new(endpoint.unwrap());
+        let endpoint = EndpointImpl::new(endpoint.unwrap());
         let endpoint_id = endpoint.id;
 
-        let endpoint_handle = EndpointHandle::new(endpoint);
+        let mut endpoint_handle = EndpointHandle::new(endpoint);
 
         let (poller, poll_notifier) = EndpointPoller::new(endpoint_handle.clone());
         poller.start_polling();
 
-        let mut endpoint_lock = endpoint_handle.lock().unwrap();
-        endpoint_lock.set_poll_notifier(poll_notifier);
-        drop(endpoint_lock);
+        let mut endpoint_lock = endpoint_handle.mut_access(&mut move |endpoint| {
+            endpoint.set_poll_notifier(poll_notifier.clone());
+            Ok(())
+        });
 
         unsafe {
             out_endpoint_id.init(endpoint_id);
@@ -82,7 +83,7 @@ ffi! {
         let endpoint_config = Arc::new(EndpointConfig::default());
 
         let mut proto_endpoint = Endpoint::new(endpoint_config, None);
-        let mut endpoint = EndpointInner::new(proto_endpoint);
+        let mut endpoint = EndpointImpl::new(proto_endpoint);
 
         let _ = handle.mut_access(&mut |client_config| {
           endpoint.set_default_client_config(client_config.clone());
@@ -91,15 +92,14 @@ ffi! {
 
         let endpoint_identifier = endpoint.id;
 
-        let shared_ref = Arc::new(Mutex::new(endpoint));
-        let endpoint = EndpointHandle::alloc(shared_ref.clone());
+        let endpoint = EndpointHandle::new(endpoint);
 
-        let (poller, poll_notifier) = EndpointPoller::new(shared_ref.clone());
+        let (poller, poll_notifier) = EndpointPoller::new(endpoint.clone());
         poller.start_polling();
 
-        let mut endpoint_lock = shared_ref.lock().unwrap();
+        let mut endpoint_lock = endpoint.lock().unwrap();
         endpoint_lock.set_poll_notifier(poll_notifier);
-
+        drop(endpoint_lock);
         unsafe {
             endpoint_id.init(endpoint_identifier);
             out_endpoint_handle.init(endpoint)
@@ -246,7 +246,7 @@ ffi! {
 }
 
 fn _read_stream(
-    handle: &mut ConnectionInner,
+    handle: &mut ConnectionImpl,
     stream_id: u64,
     message_buf: &mut Out<u8>,
     message_buf_len: size_t,
@@ -285,7 +285,7 @@ fn _read_stream(
 }
 
 fn _write_stream(
-    handle: &mut ConnectionInner,
+    handle: &mut ConnectionImpl,
     stream_id: u64,
     buffer: &mut Ref<u8>,
     buf_len: size_t,
@@ -331,7 +331,7 @@ pub mod callbacks {
             Transmit,
         },
         proto_impl::{
-            ConnectionInner,
+            ConnectionImpl,
             IpAddr,
         },
     };
@@ -352,7 +352,7 @@ pub mod callbacks {
     static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
     static mut ON_CONNECTION_POLLABLE: Option<extern "C" fn(u32)> = None;
 
-    pub(crate) fn on_new_connection(con: u32, handle: ConnectionInner) {
+    pub(crate) fn on_new_connection(con: u32, handle: ConnectionImpl) {
         unsafe {
             ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::new(handle), con);
         }

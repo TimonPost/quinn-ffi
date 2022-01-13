@@ -3,13 +3,14 @@ use crate::{
     proto,
     proto_impl::connection::{
         ConnectionEvent,
-        ConnectionInner,
+        ConnectionImpl,
     },
 };
 
 use quinn_proto::Transmit;
 
 use crate::{
+    ffi::Handle,
     proto::{
         ClientConfig,
         ConnectError,
@@ -31,6 +32,8 @@ use std::{
     thread,
 };
 
+use crate::ffi::EndpointHandle;
+
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
 /// This helps ensure we don't starve anything when the CPU is slower than the link.
@@ -48,11 +51,11 @@ pub enum EndpointEvent {
 
 pub struct EndpointPoller {
     receiver: mpsc::Receiver<u8>,
-    endpoint_ref: Arc<Mutex<EndpointInner>>,
+    endpoint_ref: Arc<Mutex<EndpointImpl>>,
 }
 
 impl EndpointPoller {
-    pub fn new(endpoint_ref: Arc<Mutex<EndpointInner>>) -> (Self, mpsc::Sender<u8>) {
+    pub fn new(endpoint_ref: Arc<Mutex<EndpointImpl>>) -> (Self, mpsc::Sender<u8>) {
         let (sender, receiver) = mpsc::channel();
         (
             EndpointPoller {
@@ -63,17 +66,19 @@ impl EndpointPoller {
         )
     }
 
-    pub fn start_polling(self) {
+    pub fn start_polling(mut self) {
         thread::spawn(move || loop {
             let _ = self.receiver.recv();
 
-            let mut endpoint = self.endpoint_ref.lock().unwrap();
-            endpoint.poll().expect("Endpoint polling thread panicked!");
+            let mut endpoint_ref = self.endpoint_ref.lock().unwrap();
+            endpoint_ref
+                .poll()
+                .expect("Endpoint polling thread panicked!");
         });
     }
 }
 
-pub struct EndpointInner {
+pub struct EndpointImpl {
     pub(crate) inner: proto::Endpoint,
     connections: HashMap<proto::ConnectionHandle, mpsc::Sender<ConnectionEvent>>,
     endpoint_events_rx: mpsc::Receiver<(proto::ConnectionHandle, EndpointEvent)>,
@@ -83,13 +88,13 @@ pub struct EndpointInner {
     default_client_config: Option<ClientConfig>,
 }
 
-impl EndpointInner {
+impl EndpointImpl {
     pub fn new(endpoint: proto::Endpoint) -> Self {
         let (tx, rx) = mpsc::channel();
 
         let id = ENDPOINT_ID.load(Ordering::Relaxed).wrapping_add(1);
 
-        return EndpointInner {
+        return EndpointImpl {
             inner: endpoint,
             connections: HashMap::new(),
             endpoint_events_tx: tx,
@@ -122,11 +127,11 @@ impl EndpointInner {
         &mut self,
         handle: proto::ConnectionHandle,
         connection: proto::Connection,
-    ) -> ConnectionInner {
+    ) -> ConnectionImpl {
         let (send, recv) = mpsc::channel();
         let _ = self.connections.insert(handle, send);
 
-        ConnectionInner::new(
+        ConnectionImpl::new(
             connection,
             handle,
             recv,
@@ -202,7 +207,7 @@ impl EndpointInner {
         &mut self,
         addr: SocketAddr,
         server_name: &str,
-    ) -> Result<ConnectionInner, ConnectError> {
+    ) -> Result<ConnectionImpl, ConnectError> {
         let config = match &self.default_client_config {
             Some(config) => config.clone(),
             None => return Err(ConnectError::NoDefaultClientConfig),
@@ -221,7 +226,7 @@ impl EndpointInner {
         config: ClientConfig,
         addr: SocketAddr,
         server_name: &str,
-    ) -> Result<ConnectionInner, ConnectError> {
+    ) -> Result<ConnectionImpl, ConnectError> {
         let (ch, conn) = self.inner.connect(config, addr, server_name)?;
 
         Ok(self.add_connection(ch, conn))

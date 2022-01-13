@@ -18,5 +18,6 @@ tracing = "0.1.29"
 tracing-subscriber = {version="0.3.5", features=["env-filter"]}
 
 [features]
-default = ["unwind-safe"]
-unwind-safe = []
+default = ["safe-api"]
+safe-api = []
+unsafe-api = []

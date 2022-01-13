@@ -26,7 +26,7 @@ pub enum ConnectionEvent {
     Ping,
 }
 
-pub struct ConnectionInner {
+pub struct ConnectionImpl {
     pub(crate) inner: proto::Connection,
     pub connected: bool,
     pub connection_events: mpsc::Receiver<ConnectionEvent>,
@@ -38,16 +38,16 @@ pub struct ConnectionInner {
     pub endpoint_poll_notifier: Sender<u8>,
 }
 
-impl ConnectionInner {
+impl ConnectionImpl {
     pub(crate) fn new(
-        connection: proto::Connection,
+        inner: proto::Connection,
         handle: proto::ConnectionHandle,
         recv: mpsc::Receiver<ConnectionEvent>,
         endpoint_events_tx: Sender<(proto::ConnectionHandle, EndpointEvent)>,
         endpoint_poll_notifier: Sender<u8>,
-    ) -> ConnectionInner {
-        ConnectionInner {
-            inner: connection,
+    ) -> ConnectionImpl {
+        ConnectionImpl {
+            inner,
             connected: false,
             connection_events: recv,
             endpoint_events: endpoint_events_tx,
@@ -59,7 +59,7 @@ impl ConnectionInner {
     }
 }
 
-impl ConnectionInner {
+impl ConnectionImpl {
     pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
         let _ = self.handle_connection_events();
         let mut poll_again = self.handle_transmits()?;

@@ -9,9 +9,7 @@ use std::{
     slice,
 };
 
-/**
-An uninitialized, assignable out parameter.
-*/
+/// An uninitialized, assignable out parameter.
 #[repr(transparent)]
 pub struct Out<'a, T: ?Sized>(*mut T, PhantomData<&'a mut T>);
 

@@ -58,6 +58,7 @@ impl QuinnResult {
     pub fn is_err(&self) -> bool {
         self.kind != Kind::Ok
     }
+
     pub fn context(self, e: QuinnError) -> Self {
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
@@ -84,13 +85,10 @@ impl QuinnResult {
     }
 
     pub(super) fn catch(f: impl FnOnce() -> Self + UnwindSafe) -> Self {
-        //println!("before last result");
-        let r = LAST_RESULT.with(|last_result| {
-            //println!("before last result");
+        LAST_RESULT.with(|last_result| {
             {
                 *last_result.borrow_mut() = None;
             }
-            //println!("after borrow last result");
             return match catch_unwind(f) {
                 Ok(result) => {
                     if result.is_err() {
@@ -127,9 +125,7 @@ impl QuinnResult {
                     QuinnResult::err()
                 }
             };
-        });
-        //println!("after last result: {:?}", r);
-        r
+        })
     }
 }
 

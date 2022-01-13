@@ -1,9 +1,3 @@
-mod addr;
-mod config;
-mod connection;
-mod endpoint;
-mod result;
-
 pub use addr::IpAddr;
 pub use config::{
     default_server_config,
@@ -11,11 +5,17 @@ pub use config::{
 };
 pub use connection::{
     ConnectionEvent,
-    ConnectionInner,
+    ConnectionImpl,
 };
 pub use endpoint::{
     EndpointEvent,
-    EndpointInner,
+    EndpointImpl,
     EndpointPoller,
 };
 pub use result::QuinnErrorKind;
+
+mod addr;
+mod config;
+mod connection;
+mod endpoint;
+mod result;
