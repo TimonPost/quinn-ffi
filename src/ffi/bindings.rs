@@ -1,8 +1,6 @@
 use crate::{
-    error,
     ffi::{
         Handle,
-        IsNull,
         Kind,
         Out,
         QuinnError,
@@ -10,7 +8,6 @@ use crate::{
         Ref,
     },
     proto::{
-        Chunk,
         DatagramEvent,
         Dir,
         Endpoint,
@@ -39,20 +36,13 @@ use quinn_proto::{
 use std::{
     io::Write,
     net::SocketAddr,
-    ops::Deref,
     sync::{
-        mpsc,
         Arc,
         Mutex,
     },
-    thread,
-    time::{
-        Duration,
-        Instant,
-    },
+    time::Instant,
 };
 use Into;
-/// ===== Endpoint API'S ======
 
 ffi! {
     fn create_server_endpoint(handle: RustlsServerConfigHandle, out_endpoint_id: Out<u8>, out_endpoint_handle: Out<EndpointHandle>) -> QuinnResult {
@@ -135,13 +125,6 @@ ffi! {
        }).into()
     }
 
-    fn poll_endpoint(handle: EndpointHandle) -> QuinnResult {
-       handle.mut_access(&mut |endpoint| {
-            endpoint.poll();
-            Ok(())
-       }).into()
-    }
-
     fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> QuinnResult {
         handle.mut_access(&mut |endpoint| {
             let slice = unsafe { data.as_bytes(length) };
@@ -172,8 +155,6 @@ ffi! {
     }
 }
 
-/// ===== Connection API'S ======
-
 ffi! {
     fn poll_connection(handle: ConnectionHandle) -> QuinnResult {
       handle.mut_access(&mut |connection| {
@@ -183,7 +164,6 @@ ffi! {
     }
 }
 
-/// ===== Error API'S ======
 ffi! {
    fn last_error(message_buf: Out<u8>, message_buf_len: size_t, actual_message_len: Out<size_t>) -> QuinnResult {
         QuinnResult::with_last_result(|last_result| {
@@ -208,8 +188,6 @@ ffi! {
         })
     }
 }
-
-/// ===== Stream API'S ======
 
 ffi! {
     fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> QuinnResult {

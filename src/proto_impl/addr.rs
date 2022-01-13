@@ -1,4 +1,3 @@
-use crate::ffi::IsNull;
 use std::{
     net,
     net::{

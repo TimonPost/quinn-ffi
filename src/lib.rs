@@ -1,41 +1,12 @@
 #![feature(option_result_unwrap_unchecked)]
 #![feature(box_into_inner)]
 
-use crate::ffi::{
-    HandleExclusive,
-    HandleSync,
-    QuinnError,
-    QuinnResult,
-};
-use std::sync::{
-    Arc,
-    Mutex,
-};
-
-use crate::proto_impl::{
-    ConnectionInner,
-    EndpointInner,
-};
 pub use quinn_proto as proto;
-use std::ffi::CString;
 
 #[macro_use]
 mod macros;
 pub mod ffi;
 pub mod proto_impl;
-
-#[no_mangle]
-pub extern "cdecl" fn add(a: u32, b: u32) -> u32 {
-    return a + b;
-}
-
-fn error() -> QuinnResult {
-    let error = QuinnError {
-        code: u64::MAX,
-        reason: CString::new("this is an error").unwrap(),
-    };
-    QuinnResult::err().context(error)
-}
 
 pub use handles::*;
 
@@ -44,9 +15,7 @@ mod handles {
     use crate::{
         ffi::{
             Handle,
-            HandleExclusive,
             HandleSync,
-            QuinnResult,
         },
         proto_impl::{
             ConnectionInner,
@@ -54,14 +23,10 @@ mod handles {
             QuinnErrorKind,
         },
     };
-    use rustls::{
-        ClientConfig,
-        ServerConfig,
-    };
+
     use std::sync::{
         Arc,
         Mutex,
-        MutexGuard,
     };
 
     // Mutex required for unwind safeness due to possible interior mutability.

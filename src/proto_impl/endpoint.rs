@@ -5,7 +5,6 @@ use crate::{
         ConnectionEvent,
         ConnectionInner,
     },
-    EndpointHandle,
 };
 
 use quinn_proto::Transmit;
@@ -64,12 +63,12 @@ impl EndpointPoller {
         )
     }
 
-    pub fn start_polling(mut self) {
+    pub fn start_polling(self) {
         thread::spawn(move || loop {
             let _ = self.receiver.recv();
 
             let mut endpoint = self.endpoint_ref.lock().unwrap();
-            endpoint.poll()
+            endpoint.poll().expect("Endpoint polling thread panicked!");
         });
     }
 }
@@ -105,14 +104,14 @@ impl EndpointInner {
         self.endpoint_poll_notifier = Some(notifer)
     }
 
-    pub fn poll(&mut self) {
+    pub fn poll(&mut self) -> Result<bool, QuinnErrorKind> {
         while let Some(transmit) = self.inner.poll_transmit() {
             self.notify_transmit(transmit);
         }
 
         // TODO limit max outgoing, invoke callback to poll again.
 
-        self.handle_connection_events();
+        self.handle_connection_events()
     }
 
     pub fn notify_transmit(&mut self, transmit: Transmit) {

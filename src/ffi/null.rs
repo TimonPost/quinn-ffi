@@ -1,12 +1,4 @@
-use crate::{
-    ffi::{
-        handle_exclusive::HandleExclusive,
-        handle_shared::HandleShared,
-        out::Out,
-        HandleSync,
-    },
-    proto_impl::IpAddr,
-};
+use crate::proto_impl::IpAddr;
 
 macro_rules! never_null {
     ($($t:ty),*) => {

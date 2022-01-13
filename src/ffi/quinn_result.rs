@@ -1,5 +1,5 @@
 use crate::proto_impl::QuinnErrorKind;
-use rustls::Error;
+
 use std::{
     any::Any,
     cell::RefCell,
@@ -159,7 +159,7 @@ impl Display for QuinnResult {
 impl<T> From<Result<T, QuinnErrorKind>> for QuinnResult {
     fn from(result: Result<T, QuinnErrorKind>) -> Self {
         match result {
-            Ok(kind) => QuinnResult::ok(),
+            Ok(_kind) => QuinnResult::ok(),
             Err(e) => match e {
                 QuinnErrorKind::QuinErrorKind(kind) => match kind {
                     Kind::Ok => QuinnResult::ok(),

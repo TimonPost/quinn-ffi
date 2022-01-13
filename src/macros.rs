@@ -1,5 +1,3 @@
-use crate::QuinnResult;
-
 /**
 Wrap an FFI function.
 

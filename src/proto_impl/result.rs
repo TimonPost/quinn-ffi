@@ -7,10 +7,7 @@ use std::{
     io,
 };
 
-use crate::ffi::{
-    Kind,
-    QuinnResult,
-};
+use crate::ffi::Kind;
 use quinn_proto::{
     ReadableError,
     VarIntBoundsExceeded,

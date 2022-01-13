@@ -27,7 +27,6 @@ pub use reference::{
     Ref,
     RefMut,
 };
-use std::sync::MutexGuard;
 
 pub trait Handle {
     type Inner;
