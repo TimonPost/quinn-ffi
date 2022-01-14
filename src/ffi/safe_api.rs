@@ -24,7 +24,7 @@ use std::sync::{
 pub type RustlsClientConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::ClientConfig>>;
 // Mutex required for unwind safeness due to possible interior mutability.
 pub type RustlsServerConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::ServerConfig>>;
-// Mutex required for unwind safeness due to possible interior mutability.
+// Mutex require d for unwind safeness due to possible interior mutability.
 pub type EndpointHandle<'a> = HandleSync<'a, Arc<Mutex<EndpointImpl>>>;
 // Mutex required for unwind safeness due to possible interior mutability.
 pub type ConnectionHandle<'a> = HandleSync<'a, Arc<Mutex<ConnectionImpl>>>;

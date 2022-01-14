@@ -83,13 +83,11 @@ impl EndpointPoller {
 
             match self.endpoint_ref.try_lock() {
                 Err(TryLockError::WouldBlock) => {
-                    // if blocking, thread spin a bit till lock is released.
+                    // if blocking, spin thread a bit till lock is released.
                     self.try_again = true;
                 }
                 Ok(mut e) => {
-                    //println!("endpoint lock");
                     e.poll().expect("Endpoint polling thread panicked!");
-                    //println!("end endpoint lock");
                     self.try_again = false;
                 }
                 _ => {}
@@ -108,6 +106,7 @@ pub struct EndpointImpl {
 
     connections: HashMap<proto::ConnectionHandle, mpsc::Sender<ConnectionEvent>>,
     // use the refs strictly for polling operations only.
+    // Locking a connection could result in deadlocks if the application is already using the lock.
     connection_refs: HashMap<proto::ConnectionHandle, Arc<Mutex<ConnectionImpl>>>,
 }
 
@@ -173,8 +172,10 @@ impl EndpointImpl {
     }
 
     pub fn poll_connection(&self, handle: ConnectionHandle) {
-        let mut connection_ref = self.connection_refs[&handle].lock().unwrap();
-        connection_ref.poll();
+        // if lock is blocked its oke to skip one poll since this function is triggered in various cases.
+        if let Ok(connection) = self.connection_refs[&handle] {
+            connection.poll();
+        }
     }
 
     pub fn forward_event_to_connection(
