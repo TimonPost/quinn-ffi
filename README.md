@@ -12,6 +12,7 @@
   
 </div>
 
+
 ## Main Components
 
 Rust and C# are both safe languages, however they operate in different paradigms. The FFI is inherently unsafe between the two and therefore the right care has to be taken when designing this in-between layer.  
