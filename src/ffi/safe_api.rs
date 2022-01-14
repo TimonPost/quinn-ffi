@@ -27,7 +27,7 @@ pub type RustlsServerConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::Server
 // Mutex required for unwind safeness due to possible interior mutability.
 pub type EndpointHandle<'a> = HandleSync<'a, Arc<Mutex<EndpointImpl>>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type ConnectionHandle<'a> = HandleSync<'a, Mutex<ConnectionImpl>>;
+pub type ConnectionHandle<'a> = HandleSync<'a, Arc<Mutex<ConnectionImpl>>>;
 
 impl<'a> Handle for RustlsClientConfigHandle<'a> {
     type Inner = quinn_proto::ClientConfig;
@@ -71,8 +71,10 @@ impl<'a> Handle for EndpointHandle<'a> {
         cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
     ) -> Result<(), QuinnErrorKind> {
         let mut lock = self.lock().unwrap();
-
-        cb(&mut lock)
+        //println!(" ++ endpoint lock");
+        let a = cb(&mut lock);
+        //println!(" ++ end endpoint lock");
+        a
     }
 
     fn new(instance: Self::Inner) -> Self {
@@ -123,14 +125,15 @@ impl<'a> Handle for ConnectionHandle<'a> {
         cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
     ) -> Result<(), QuinnErrorKind> {
         let mut lock = self.lock().unwrap();
-
+        // println!(" ++ connection lock");
         let a = cb(&mut lock);
         drop(lock);
+        //println!("-- end connection lock");
         a
     }
 
     fn new(instance: Self::Inner) -> Self {
-        Self::alloc(Mutex::new(instance))
+        Self::alloc(Arc::new(Mutex::new(instance)))
     }
 }
 

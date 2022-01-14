@@ -76,8 +76,9 @@ impl ConnectionImpl {
     /// Connection should be polled when IO operations are performed, and timeout happened.
     ///
     /// This will invoke a callback.
-    pub fn mark_pollable(&self) {
-        callbacks::on_connection_pollable(self.connection_id())
+    pub fn mark_pollable(&mut self) {
+        self.poll();
+        //callbacks::on_connection_pollable(self.connection_id())
     }
 
     fn handle_timer(&mut self) -> bool {
@@ -159,10 +160,22 @@ impl ConnectionImpl {
                     callbacks::on_stream_writable(self.connection_id(), id)
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
-                    callbacks::on_stream_opened(self.connection_id(), Dir::Uni);
+                    if let Some(stream_id) = self.inner.streams().accept(Dir::Uni) {
+                        callbacks::on_stream_opened(
+                            self.connection_id(),
+                            VarInt::from(stream_id).into_inner(),
+                            Dir::Uni,
+                        );
+                    }
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
-                    callbacks::on_stream_opened(self.connection_id(), Dir::Bi);
+                    if let Some(stream_id) = self.inner.streams().accept(Dir::Bi) {
+                        callbacks::on_stream_opened(
+                            self.connection_id(),
+                            VarInt::from(stream_id).into_inner(),
+                            Dir::Bi,
+                        );
+                    }
                 }
                 DatagramReceived => {
                     callbacks::on_datagram_received(self.connection_id());

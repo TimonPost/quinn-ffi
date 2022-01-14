@@ -12,10 +12,7 @@ use crate::{
     },
 };
 
-use crate::ffi::{
-    HandleExclusive,
-    HandleShared,
-};
+use crate::ffi::HandleShared;
 use std::sync::{
     Arc,
     Mutex,
@@ -28,7 +25,7 @@ pub type RustlsServerConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::Server
 // Mutex required for unwind safeness due to possible interior mutability.
 pub type EndpointHandle<'a> = HandleSync<'a, Arc<Mutex<EndpointImpl>>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type ConnectionHandle<'a> = HandleSync<'a, Mutex<ConnectionImpl>>;
+pub type ConnectionHandle<'a> = HandleSync<'a, Arc<Mutex<ConnectionImpl>>>;
 
 impl<'a> Handle for RustlsClientConfigHandle<'a> {
     type Inner = quinn_proto::ClientConfig;
@@ -131,7 +128,7 @@ impl<'a> Handle for ConnectionHandle<'a> {
     }
 
     fn new(instance: Self::Inner) -> Self {
-        Self::alloc(Mutex::new(instance))
+        Self::alloc(Arc::new(Mutex::new(instance)))
     }
 }
 
@@ -145,7 +142,7 @@ macro_rules! ffi {
         $(
             #[allow(unsafe_code, unused_attributes)]
             #[no_mangle]
-            pub unsafe extern "clrcall" fn $name( $(mut $arg_ident : $arg_ty),* ) -> QuinnResult {
+            pub unsafe extern "cdecl" fn $name( $(mut $arg_ident : $arg_ty),* ) -> QuinnResult {
                 $body
             }
         )*

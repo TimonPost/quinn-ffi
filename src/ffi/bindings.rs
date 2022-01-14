@@ -136,14 +136,18 @@ ffi! {
                 .handle(Instant::now(), addr, None, None, BytesMut::from(slice))
             {
                 Some((handle, DatagramEvent::NewConnection(conn))) => {
-                    let connection = endpoint.add_connection(handle, conn);
+                    let mut connection = endpoint.add_connection(handle, conn);
+                    connection.poll();
 
-                    callbacks::on_new_connection(handle.0 as u32, connection);
-                    callbacks::on_connection_pollable(handle.0 as u32)
+                    let connection_handle = super::ConnectionHandle::new(connection);
+                    endpoint.register_connection(handle, connection_handle.clone());
+
+                    callbacks::on_new_connection(handle.0 as u32, connection_handle);
                 }
                 Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                     endpoint.forward_event_to_connection(handle, event)?;
-                    callbacks::on_connection_pollable(handle.0 as u32);
+
+                    endpoint.poll_connection(handle);
                 }
                 None => {
                     println!("None handled");
@@ -152,6 +156,7 @@ ffi! {
 
             Ok(())
         }).into()
+
     }
 }
 
@@ -192,13 +197,10 @@ ffi! {
 ffi! {
     fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> QuinnResult {
         let dir = dir_from_u8(stream_direction);
-        println!("before mut access: {}", dir);
+        println!("access read");
         handle.mut_access(&mut |connection| {
-            println!("before accepting");
            let result = if let Some(stream_id) = connection.inner.streams().accept(dir) {
-             println!("before pollable");
                 connection.mark_pollable();
-                  println!("before init");
                 unsafe {
                     stream_id_out.init(VarInt::from(stream_id).into());
                 }
@@ -322,6 +324,7 @@ fn _stream_id(stream_id: u64) -> Result<StreamId, VarIntBoundsExceeded> {
 pub mod callbacks {
     use crate::{
         ffi::{
+            ConnectionHandle,
             Handle,
             QuinnResult,
         },
@@ -348,13 +351,13 @@ pub mod callbacks {
     static mut ON_STREAM_STOPPED: Option<extern "C" fn(u32, u64, u8)> = None;
     static mut ON_STREAM_AVAILABLE: Option<extern "C" fn(u32, u8)> = None;
     static mut ON_DATAGRAM_RECEIVED: Option<extern "C" fn(u32)> = None;
-    static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u8)> = None;
+    static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u64, u8)> = None;
     static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
     static mut ON_CONNECTION_POLLABLE: Option<extern "C" fn(u32)> = None;
 
-    pub(crate) fn on_new_connection(con: u32, handle: ConnectionImpl) {
+    pub(crate) fn on_new_connection(con: u32, handle: ConnectionHandle) {
         unsafe {
-            ON_NEW_CONNECTION.unwrap_unchecked()(super::ConnectionHandle::new(handle), con);
+            ON_NEW_CONNECTION.unwrap_unchecked()(handle, con);
         }
     }
 
@@ -422,9 +425,9 @@ pub mod callbacks {
         }
     }
 
-    pub(crate) fn on_stream_opened(con: u32, dir: Dir) {
+    pub(crate) fn on_stream_opened(con: u32, stream_id: u64, dir: Dir) {
         unsafe {
-            ON_STREAM_OPENED.unwrap_unchecked()(con, dir as u8);
+            ON_STREAM_OPENED.unwrap_unchecked()(con, stream_id, dir as u8);
         }
     }
 
@@ -521,7 +524,7 @@ pub mod callbacks {
     }
 
     #[no_mangle]
-    pub(crate) fn set_on_stream_opened(cb: extern "C" fn(u32, u8)) -> QuinnResult {
+    pub(crate) fn set_on_stream_opened(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
         unsafe {
             ON_STREAM_OPENED = Some(cb);
         }
