@@ -1,8 +1,6 @@
 use crate::ffi::{
+    FFIResult,
     Out,
-    QuinnResult,
-    RustlsClientConfigHandle,
-    RustlsServerConfigHandle,
 };
 use rustls::{
     client::{
@@ -41,65 +39,10 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> (Vec<u8>, V
     (serialized_key, serialized_certificate)
 }
 
-#[no_mangle]
-pub extern "cdecl" fn default_server_config(
-    mut out_handle: Out<RustlsServerConfigHandle>,
-) -> QuinnResult {
-    // tracing::subscriber::set_global_default(
-    //     tracing_subscriber::FmtSubscriber::builder()
-    //         .with_env_filter("trace")
-    //         .finish(),
-    // )
-    // .unwrap();
-
-    let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
-
-    let (key, cert) = (PrivateKey(key), Certificate(cert));
-    let mut store = RootCertStore::empty();
-    store.add(&cert);
-
-    let mut config = rustls::ServerConfig::builder()
-        .with_safe_default_cipher_suites()
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)
-        .unwrap();
-
-    config.key_log = Arc::new(KeyLogFile::new());
-
-    let config = ServerConfig::with_crypto(Arc::new(config));
-
-    unsafe { out_handle.init(RustlsServerConfigHandle::new(ServerConfig::from(config))) }
-
-    QuinnResult::ok()
-}
-
-#[no_mangle]
-pub extern "cdecl" fn default_client_config(
-    mut out_handle: Out<RustlsClientConfigHandle>,
-) -> QuinnResult {
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-
-    crypto.key_log = Arc::new(KeyLogFile::new());
-
-    unsafe {
-        out_handle.init(RustlsClientConfigHandle::new(ClientConfig::new(Arc::new(
-            crypto,
-        ))));
-    }
-
-    QuinnResult::ok()
-}
-
-struct SkipServerVerification;
+pub struct SkipServerVerification;
 
 impl SkipServerVerification {
-    fn new() -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Arc::new(Self)
     }
 }

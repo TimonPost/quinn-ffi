@@ -19,46 +19,52 @@ thread_local!(
     static LAST_RESULT: RefCell<Option<LastResult>> = RefCell::new(None);
 );
 
+/// The last `QuinnError`.
 #[derive(Debug)]
 pub struct LastResult {
     err: Option<QuinnError>,
 }
 
+/// FFI safe result type.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QuinnResult {
-    pub kind: Kind,
+pub struct FFIResult {
+    // FFi result only contains a enum kind.
+    pub kind: FFIResultKind,
 }
 
-impl QuinnResult {
-    pub fn new(kind: Kind) -> QuinnResult {
-        QuinnResult { kind }
+impl FFIResult {
+    pub fn new(kind: FFIResultKind) -> FFIResult {
+        FFIResult { kind }
     }
 
+    /// Result is successful.
     pub fn ok() -> Self {
-        QuinnResult::new(Kind::Ok)
+        FFIResult::new(FFIResultKind::Ok)
     }
 
+    /// Result is erroneous.
     pub fn err() -> Self {
-        QuinnResult::new(Kind::Error)
+        FFIResult::new(FFIResultKind::Error)
     }
 
     pub fn buffer_too_small() -> Self {
-        QuinnResult::new(Kind::BufferToSmall)
+        FFIResult::new(FFIResultKind::BufferToSmall)
     }
 
     pub fn buffer_blocked() -> Self {
-        QuinnResult::new(Kind::BufferBlocked)
+        FFIResult::new(FFIResultKind::BufferBlocked)
     }
 
     pub fn argument_null() -> Self {
-        QuinnResult::new(Kind::ArgumentNull)
+        FFIResult::new(FFIResultKind::ArgumentNull)
     }
 
     pub fn is_err(&self) -> bool {
-        self.kind != Kind::Ok
+        self.kind != FFIResultKind::Ok
     }
 
+    /// Sets the `LAST_RESULT` context to the given `QuinnError`.
     pub fn context(self, e: QuinnError) -> Self {
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
@@ -68,7 +74,8 @@ impl QuinnResult {
         self
     }
 
-    pub fn with_last_result<R>(f: impl FnOnce(Option<&QuinnError>) -> R) -> R {
+    /// Creates result from `LAST_RESULT`.
+    pub fn from_last_result<R>(f: impl FnOnce(Option<&QuinnError>) -> R) -> R {
         LAST_RESULT.with(|last_result| {
             let last_result = last_result.borrow();
 
@@ -84,6 +91,7 @@ impl QuinnResult {
         })
     }
 
+    /// Calls a function catching any panic and on panic sets the `LAST_RESULT`.
     pub(super) fn catch(f: impl FnOnce() -> Self + UnwindSafe) -> Self {
         LAST_RESULT.with(|last_result| {
             {
@@ -106,7 +114,7 @@ impl QuinnResult {
                         return result;
                     }
 
-                    QuinnResult::ok()
+                    FFIResult::ok()
                 }
                 Err(e) => {
                     println!("err");
@@ -122,7 +130,7 @@ impl QuinnResult {
                         };
                     });
 
-                    QuinnResult::err()
+                    FFIResult::err()
                 }
             };
         })
@@ -139,53 +147,62 @@ fn extract_panic(err: &Box<dyn Any + Send + 'static>) -> Option<String> {
     }
 }
 
-impl Display for QuinnResult {
+impl Display for FFIResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self.kind {
-            Kind::Ok => write!(f, "Successful")?,
-            Kind::Error => write!(f, "Some error occurred")?,
-            Kind::BufferToSmall => write!(f, "The supplied buffer was to small.")?,
-            Kind::BufferBlocked => write!(f, "There is no data in the buffer to be read.")?,
-            Kind::ArgumentNull => write!(f, "An argument was null.")?,
+            FFIResultKind::Ok => write!(f, "Successful")?,
+            FFIResultKind::Error => write!(f, "Some error occurred")?,
+            FFIResultKind::BufferToSmall => write!(f, "The supplied buffer was to small.")?,
+            FFIResultKind::BufferBlocked => {
+                write!(f, "There is no data in the buffer to be read.")?
+            }
+            FFIResultKind::ArgumentNull => write!(f, "An argument was null.")?,
         }
         Ok(())
     }
 }
 
-impl<T> From<Result<T, QuinnErrorKind>> for QuinnResult {
+impl<T> From<Result<T, QuinnErrorKind>> for FFIResult {
     fn from(result: Result<T, QuinnErrorKind>) -> Self {
         match result {
-            Ok(_kind) => QuinnResult::ok(),
+            Ok(_kind) => FFIResult::ok(),
             Err(e) => match e {
                 QuinnErrorKind::QuinErrorKind(kind) => match kind {
-                    Kind::Ok => QuinnResult::ok(),
-                    Kind::Error => QuinnResult::err(),
-                    Kind::BufferToSmall => QuinnResult::buffer_too_small(),
-                    Kind::BufferBlocked => QuinnResult::buffer_blocked(),
-                    Kind::ArgumentNull => QuinnResult::argument_null(),
+                    FFIResultKind::Ok => FFIResult::ok(),
+                    FFIResultKind::Error => FFIResult::err(),
+                    FFIResultKind::BufferToSmall => FFIResult::buffer_too_small(),
+                    FFIResultKind::BufferBlocked => FFIResult::buffer_blocked(),
+                    FFIResultKind::ArgumentNull => FFIResult::argument_null(),
                 },
-                e => QuinnResult::err().context(QuinnError::new(0, e.to_string())),
+                e => FFIResult::err().context(QuinnError::new(0, e.to_string())),
             },
         }
     }
 }
 
-impl From<&str> for QuinnResult {
+impl From<&str> for FFIResult {
     fn from(result: &str) -> Self {
-        QuinnResult::err().context(QuinnError::new(0, result.to_string()))
+        FFIResult::err().context(QuinnError::new(0, result.to_string()))
     }
 }
 
+/// Indicating a certain result kind.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Kind {
+pub enum FFIResultKind {
+    /// Result is successful
     Ok,
+    /// Result is erroneous
     Error,
+    /// Buffer is to small, resize and try again.
     BufferToSmall,
+    /// Buffer is blocked meaning it doesnt contain data.
     BufferBlocked,
+    /// A argument to the FFI function was not initialized.
     ArgumentNull,
 }
 
+/// Error with code and reason.
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuinnError {

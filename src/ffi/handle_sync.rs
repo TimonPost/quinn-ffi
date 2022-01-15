@@ -11,30 +11,35 @@ use std::{
     },
 };
 
-/// A handle that can only contain types that are `Sync` + `Send` semantically.
+/// A shared handle that can be read/write-accessed concurrently by multiple threads.
+///
+/// Can only contain types that are `Sync` + `Send` semantically.
 #[repr(transparent)]
 pub struct HandleSync<'a, T>(*mut T, PhantomData<&'a T>)
 where
-    T: ?Sized;
+    T: ?Sized + Send + Sync;
 
-impl<'a, T> UnwindSafe for HandleSync<'a, T> where T: ?Sized + RefUnwindSafe {}
+impl<'a, T> UnwindSafe for HandleSync<'a, T> where T: ?Sized + Send + Sync + RefUnwindSafe {}
+
+// The handle is semantically `&T`
+unsafe impl<'a, T> Send for HandleSync<'a, T> where T: ?Sized + Send + Sync {}
+
+// The handle is semantically `&T`
+unsafe impl<'a, T> Sync for HandleSync<'a, T> where T: ?Sized + Send + Sync {}
 
 impl<'a, T> HandleSync<'a, T>
 where
     T: Send + Sync,
 {
-    pub(crate) fn alloc(value: T) -> Self
-    where
-        T: 'static,
-    {
+    /// Allocates and initializes memory for the passed type.
+    pub fn alloc(value: T) -> Self {
         HandleSync(Box::into_raw(Box::new(value)), PhantomData)
     }
 
-    // There are no other live references and the handle won't be used again
-    pub(super) unsafe fn dealloc<R>(handle: Self, f: impl FnOnce(T) -> R) -> R
-    where
-        T: Send + Sync,
-    {
+    /// Deallocates and initializes memory for the passed type.
+    ///
+    /// There are no other live references and the handle won't be used again
+    pub unsafe fn dealloc<R>(handle: Self, f: impl FnOnce(T) -> R) -> R {
         let v = Box::into_inner(Box::from_raw(handle.0));
         f(v)
     }
@@ -42,7 +47,7 @@ where
 
 impl<'a, T> Deref for HandleSync<'a, T>
 where
-    T: ?Sized,
+    T: ?Sized + Send + Sync,
 {
     type Target = T;
 
@@ -54,7 +59,7 @@ where
 
 impl<'a, T> DerefMut for HandleSync<'a, T>
 where
-    T: ?Sized,
+    T: ?Sized + Send + Sync,
 {
     fn deref_mut(&mut self) -> &mut T {
         // We own the interior value
@@ -62,7 +67,10 @@ where
     }
 }
 
-impl<'a, T: ?Sized> IsNull for HandleSync<'a, T> {
+impl<'a, T> IsNull for HandleSync<'a, T>
+where
+    T: ?Sized + Send + Sync,
+{
     fn is_null(&self) -> bool {
         self.0.is_null()
     }

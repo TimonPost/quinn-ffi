@@ -1,5 +1,5 @@
 use crate::{
-    ffi::bindings::callbacks,
+    ffi::callbacks,
     proto,
     proto_impl::connection::{
         ConnectionEvent,
@@ -50,12 +50,17 @@ const IO_LOOP_BOUND: usize = 160;
 /// An endpoint id that is increased for each created endpoint.
 static ENDPOINT_ID: AtomicU8 = AtomicU8::new(0);
 
+/// Events for the endpoint.
 #[derive(Debug)]
 pub enum EndpointEvent {
+    /// Protocol logic.
     Proto(proto::EndpointEvent),
+    /// Transmit ready.
     Transmit(proto::Transmit),
 }
 
+/// Polls the endpoint when notified to do so.
+/// This polling happens on its own thread.
 pub struct EndpointPoller {
     receiver: mpsc::Receiver<u8>,
     try_again: bool,
@@ -63,6 +68,7 @@ pub struct EndpointPoller {
 }
 
 impl EndpointPoller {
+    /// Creates a new `EndpointPoller`.
     pub fn new(endpoint_ref: Arc<Mutex<EndpointImpl>>) -> (Self, mpsc::Sender<u8>) {
         let (sender, receiver) = mpsc::channel();
         (
@@ -75,6 +81,8 @@ impl EndpointPoller {
         )
     }
 
+    /// Starts polling the endpoint.
+    /// This will start a new thread.
     pub fn start_polling(mut self) {
         thread::spawn(move || loop {
             if !self.try_again {
@@ -96,14 +104,15 @@ impl EndpointPoller {
     }
 }
 
+/// A QUIC endpoint using quinn-proto.
 pub struct EndpointImpl {
+    /// The endpoint id.
+    pub id: u8,
     pub(crate) inner: proto::Endpoint,
     endpoint_events_rx: mpsc::Receiver<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_events_tx: mpsc::Sender<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_poll_notifier: Option<mpsc::Sender<u8>>,
-    pub id: u8,
     default_client_config: Option<ClientConfig>,
-
     connections: HashMap<proto::ConnectionHandle, mpsc::Sender<ConnectionEvent>>,
     // use the refs strictly for polling operations only.
     // Locking a connection could result in deadlocks if the application is already using the lock.
@@ -128,10 +137,16 @@ impl EndpointImpl {
         };
     }
 
+    /// Sets the endpoint poll notifier.
+    /// This sender can be used to trigger a endpoint poll operation.
     pub fn set_poll_notifier(&mut self, notifer: mpsc::Sender<u8>) {
         self.endpoint_poll_notifier = Some(notifer)
     }
 
+    /// Polls the endpoint.
+    ///
+    /// - Triggers a callback for all outgoing transmits.
+    /// - Handles all connection sent endpoint events.
     pub fn poll(&mut self) -> Result<bool, QuinnErrorKind> {
         while let Some(transmit) = self.inner.poll_transmit() {
             self.notify_transmit(transmit);
@@ -142,10 +157,7 @@ impl EndpointImpl {
         self.handle_connection_events()
     }
 
-    pub fn notify_transmit(&mut self, transmit: Transmit) {
-        callbacks::on_transmit(self.id, transmit);
-    }
-
+    /// Creates and adds a connection for this endpoint.
     pub fn add_connection(
         &mut self,
         handle: proto::ConnectionHandle,
@@ -163,7 +175,9 @@ impl EndpointImpl {
         )
     }
 
-    pub fn register_connection(
+    /// Registers a connection for polling.
+    /// This is required for auto polling connections.
+    pub fn register_pollable_connection(
         &mut self,
         handle: proto::ConnectionHandle,
         connection: Arc<Mutex<ConnectionImpl>>,
@@ -171,13 +185,17 @@ impl EndpointImpl {
         self.connection_refs.insert(handle, connection);
     }
 
+    /// Polls a connection by the given connection handle.
     pub fn poll_connection(&self, handle: ConnectionHandle) {
         // if lock is blocked its oke to skip one poll since this function is triggered in various cases.
-        if let Ok(connection) = self.connection_refs[&handle] {
-            connection.poll();
+        if let Some(connection) = self.connection_refs.get(&handle) {
+            if let Ok(mut conn) = connection.try_lock() {
+                conn.poll();
+            }
         }
     }
 
+    /// Sends a `ConnectionEvent` to a particular connection.
     pub fn forward_event_to_connection(
         &mut self,
         handle: proto::ConnectionHandle,
@@ -191,7 +209,50 @@ impl EndpointImpl {
         Ok(())
     }
 
-    pub fn handle_connection_events(&mut self) -> Result<bool, QuinnErrorKind> {
+    /// Set the client configuration used by `connect`.
+    pub fn set_default_client_config(&mut self, config: ClientConfig) {
+        self.default_client_config = Some(config);
+    }
+
+    /// Connects to a remote endpoint
+    ///
+    /// `server_name` must be covered by the certificate presented by the server. This prevents a
+    /// connection from being intercepted by an attacker with a valid certificate for some other
+    /// server.
+    ///
+    /// May fail immediately due to configuration errors, or in the future if the connection could
+    /// not be established.
+    pub fn connect(
+        &mut self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<ConnectionImpl, ConnectError> {
+        let config = match &self.default_client_config {
+            Some(config) => config.clone(),
+            None => return Err(ConnectError::NoDefaultClientConfig),
+        };
+
+        self.connect_with(config, addr, server_name)
+    }
+
+    /// Connects to a remote endpoint using a custom configuration.
+    ///
+    /// See [`connect()`] for details.
+    ///
+    /// [`connect()`]: EndpointImpl::connect
+    pub fn connect_with(
+        &mut self,
+        config: ClientConfig,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<ConnectionImpl, ConnectError> {
+        let (ch, conn) = self.inner.connect(config, addr, server_name)?;
+
+        Ok(self.add_connection(ch, conn))
+    }
+
+    /// Handles events sent by connections which in turn might trigger new events for connections.
+    fn handle_connection_events(&mut self) -> Result<bool, QuinnErrorKind> {
         for _ in 0..IO_LOOP_BOUND {
             match self.endpoint_events_rx.try_recv() {
                 Ok((handle, event)) => {
@@ -228,45 +289,8 @@ impl EndpointImpl {
         return Ok(true);
     }
 
-    /// Set the client configuration used by `connect`
-    pub fn set_default_client_config(&mut self, config: ClientConfig) {
-        self.default_client_config = Some(config);
-    }
-
-    /// Connect to a remote endpoint
-    ///
-    /// `server_name` must be covered by the certificate presented by the server. This prevents a
-    /// connection from being intercepted by an attacker with a valid certificate for some other
-    /// server.
-    ///
-    /// May fail immediately due to configuration errors, or in the future if the connection could
-    /// not be established.
-    pub fn connect(
-        &mut self,
-        addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<ConnectionImpl, ConnectError> {
-        let config = match &self.default_client_config {
-            Some(config) => config.clone(),
-            None => return Err(ConnectError::NoDefaultClientConfig),
-        };
-
-        self.connect_with(config, addr, server_name)
-    }
-
-    /// Connect to a remote endpoint using a custom configuration.
-    ///
-    /// See [`connect()`] for details.
-    ///
-    /// [`connect()`]: Endpoint::connect
-    pub fn connect_with(
-        &mut self,
-        config: ClientConfig,
-        addr: SocketAddr,
-        server_name: &str,
-    ) -> Result<ConnectionImpl, ConnectError> {
-        let (ch, conn) = self.inner.connect(config, addr, server_name)?;
-
-        Ok(self.add_connection(ch, conn))
+    /// Invokes a initialized callback by the client application.
+    fn notify_transmit(&mut self, transmit: Transmit) {
+        callbacks::on_transmit(self.id, transmit);
     }
 }

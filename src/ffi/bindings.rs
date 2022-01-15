@@ -2,29 +2,33 @@ use crate::{
     ffi::{
         ConnectionHandle,
         EndpointHandle,
+        FFIResult,
+        FFIResultKind,
         Handle,
-        Kind,
         Out,
         QuinnError,
-        QuinnResult,
         Ref,
         RustlsClientConfigHandle,
         RustlsServerConfigHandle,
     },
     proto::{
+        ClientConfig,
         DatagramEvent,
         Dir,
         Endpoint,
         EndpointConfig,
         ReadError,
+        ServerConfig,
         StreamId,
     },
     proto_impl::{
+        generate_self_signed_cert,
         ConnectionImpl,
         EndpointImpl,
         EndpointPoller,
         IpAddr,
         QuinnErrorKind,
+        SkipServerVerification,
     },
 };
 use bytes::BytesMut;
@@ -32,6 +36,16 @@ use libc::size_t;
 use quinn_proto::{
     VarInt,
     VarIntBoundsExceeded,
+};
+use rustls::{
+    client::{
+        ServerCertVerified,
+        ServerCertVerifier,
+    },
+    Certificate,
+    KeyLogFile,
+    PrivateKey,
+    RootCertStore,
 };
 use std::{
     io::Write,
@@ -42,10 +56,18 @@ use std::{
     },
     time::Instant,
 };
+
 use Into;
 
 ffi! {
-    fn create_server_endpoint(handle: RustlsServerConfigHandle, out_endpoint_id: Out<u8>, out_endpoint_handle: Out<EndpointHandle>) -> QuinnResult {
+    /// Creates a server endpoint with a certain configuration.
+    ///
+    /// * `handle`: Valid `RustlsServerConfigHandle` pointer for the duration of the function call.
+    /// * `endpoint_id`: Allocated memory for the endpoint id of the server endpoint.
+    /// * `out_endpoint_handle`: Allocated memory for a pointer that will be initialized with `EndpointHandle`.
+    ///
+    /// Use the returned `EndpointHandle` for endpoint related FFI functions.
+    fn create_server_endpoint(handle: RustlsServerConfigHandle, out_endpoint_id: Out<u8>, out_endpoint_handle: Out<EndpointHandle>) -> FFIResult {
         let endpoint_config = Arc::new(EndpointConfig::default());
 
         let mut endpoint = None;
@@ -72,14 +94,21 @@ ffi! {
             out_endpoint_handle.init(endpoint_handle);
         }
 
-        QuinnResult::ok()
+        FFIResult::ok()
     }
 
+    /// Creates a client endpoint with a certain configuration.
+    ///
+    /// * `handle`: Valid `RustlsClientConfigHandle` pointer for the duration of the function call.
+    /// * `endpoint_id`: Allocated memory for the endpoint id of the new endpoint.
+    /// * `out_endpoint_handle`: Allocated memory for a pointer that will be initialized with `EndpointHandle`.
+    ///
+    /// Use the returned `EndpointHandle` for endpoint related FFI functions.
     fn create_client_endpoint(
         handle: RustlsClientConfigHandle,
         endpoint_id: Out<u8>,
         out_endpoint_handle: Out<EndpointHandle>
-    ) -> QuinnResult {
+    ) -> FFIResult {
         let endpoint_config = Arc::new(EndpointConfig::default());
 
         let mut proto_endpoint = Endpoint::new(endpoint_config, None);
@@ -105,16 +134,25 @@ ffi! {
             out_endpoint_handle.init(endpoint)
         }
 
-        QuinnResult::ok()
+        FFIResult::ok()
     }
 
+    /// Connects a client to some remote address.
+    ///
+    /// * `handle`: Valid `EndpointHandle` pointer for the duration of the function call.
+    /// * `address`: A type defining a socket address. Make sure to use correct layout.
+    /// * `out_connection`: Allocated memory for a pointer that will be initialized with `ConnectionHandle`.
+    /// * `out_connection_id`: Allocated memory for the connection id of the new connection.
+    ///
+    /// Use the returned `ConnectionHandle` for connection related FFI functions.
     fn connect_client(
         handle: EndpointHandle,
         address: IpAddr,
         out_connection: Out<ConnectionHandle>,
         out_connection_id: Out<u32>
-    ) -> QuinnResult {
+    ) -> FFIResult {
         handle.mut_access(&mut |endpoint| {
+            // TODO: remove localhost with Ref<u8> pointing to string.
             let connection = endpoint.connect(address.into(), "localhost").unwrap();
 
             unsafe {
@@ -125,7 +163,13 @@ ffi! {
        }).into()
     }
 
-    fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> QuinnResult {
+    /// Handles the given datagram.
+    ///
+    /// * `handle`: Valid `EndpointHandle` pointer for the duration of the function call.
+    /// * `data`: Reference to memory storing the buffer containing the datagram.
+    /// * `length`: The length of the buffer storing the datagram.
+    /// * `address`: A type defining a socket address. Make sure to use correct layout.
+    fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> FFIResult {
         handle.mut_access(&mut |endpoint| {
             let slice = unsafe { data.as_bytes(length) };
 
@@ -140,9 +184,9 @@ ffi! {
                     connection.poll();
 
                     let connection_handle = super::ConnectionHandle::new(connection);
-                    endpoint.register_connection(handle, connection_handle.clone());
+                    endpoint.register_pollable_connection(handle, connection_handle.clone());
 
-                    callbacks::on_new_connection(handle.0 as u32, connection_handle);
+                    callbacks::on_new_connection( connection_handle, handle.0 as u32,);
                 }
                 Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                     endpoint.forward_event_to_connection(handle, event)?;
@@ -161,7 +205,10 @@ ffi! {
 }
 
 ffi! {
-    fn poll_connection(handle: ConnectionHandle) -> QuinnResult {
+    /// Polls a given connection.
+    ///
+    /// * `handle`: Valid `ConnectionHandle` pointer for the duration of the function call.
+    fn poll_connection(handle: ConnectionHandle) -> FFIResult {
       handle.mut_access(&mut |connection| {
         let a = connection.poll();
         a
@@ -170,32 +217,44 @@ ffi! {
 }
 
 ffi! {
-   fn last_error(message_buf: Out<u8>, message_buf_len: size_t, actual_message_len: Out<size_t>) -> QuinnResult {
-        QuinnResult::with_last_result(|last_result| {
+    /// Retrieves the last occurred error.
+    ///
+    /// * `error_buf`: Allocated memory for the error message destination.
+    /// * `error_buf_len`: The size of the allocated error message buffer `error_buf`.
+    /// * `actual_error_buf_len`: Allocated memory for the actual length of the error buffer.
+    ///
+    /// `actual_error_buf_len` could be used to resize buffer if result returns `BufferToSmall`.
+   fn last_error(error_buf: Out<u8>, error_buf_len: size_t, actual_error_buf_len: Out<size_t>) -> FFIResult {
+        FFIResult::from_last_result(|last_result| {
             if let Some(error_msg) = last_result {
                 let error_as_bytes = error_msg.reason.as_bytes();
 
                 // "The out pointer is valid and not mutably aliased elsewhere"
                 unsafe {
-                    actual_message_len.init(error_as_bytes.len());
+                    actual_error_buf_len.init(error_as_bytes.len());
                 }
 
-                if message_buf_len < error_as_bytes.len() {
-                    return QuinnResult::buffer_too_small();
+                if error_buf_len < error_as_bytes.len() {
+                    return FFIResult::buffer_too_small();
                 }
 
                 // "The buffer is valid for writes and the length is within the buffer"
                 unsafe {
-                    message_buf.init_bytes(error_as_bytes);
+                    error_buf.init_bytes(error_as_bytes);
                 }
             }
-            QuinnResult::ok()
+            FFIResult::ok()
         })
     }
 }
 
 ffi! {
-    fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> QuinnResult {
+    /// Accepts a stream.
+    ///
+    /// * `handle`: Valid `ConnectionHandle` pointer for the duration of the function call.
+    /// * `stream_direction`: The direction of the stream to accept.
+    /// * `stream_id_out`: Allocated memory for the `stream_id` of the accepted stream.
+    fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> FFIResult {
         let dir = dir_from_u8(stream_direction);
         println!("access read");
         handle.mut_access(&mut |connection| {
@@ -215,7 +274,16 @@ ffi! {
 
     }
 
-    fn read_stream(handle: ConnectionHandle,stream_id: u64,message_buf: Out<u8>,message_buf_len: size_t, actual_message_len: Out<size_t>) -> QuinnResult {
+    /// Reads from a stream.
+    ///
+    /// * `handle`: Valid `ConnectionHandle` pointer for the duration of the function call.
+    /// * `stream_id`: The id of the stream to read from.
+    /// * `message_buf`: Allocated memory for the buffer destination.
+    /// * `message_buf_len`: The size of the allocated memory buffer `message_buf`.
+    /// * `actual_message_len`: Allocated memory for number of bytes read.
+    ///
+    /// `actual_message_len` could be used to resize buffer if result returns `BufferToSmall`.
+    fn read_stream(handle: ConnectionHandle, stream_id: u64, message_buf: Out<u8>, message_buf_len: size_t, actual_message_len: Out<size_t>) -> FFIResult {
          handle.mut_access(&mut |connection| {
             _read_stream(
                 connection,
@@ -227,13 +295,25 @@ ffi! {
         }).into()
     }
 
-    fn write_stream(handle: ConnectionHandle,stream_id: u64,buffer: Ref<u8>,buf_len: size_t,written_bytes: Out<size_t>) -> QuinnResult {
+    /// Writes to a stream.
+    ///
+    /// * `handle`: Valid `ConnectionHandle` pointer for the duration of the function call.
+    /// * `stream_id`: The id of the stream to write to.
+    /// * `buffer`: Allocated and initialized memory for the buffer that is written.
+    /// * `buf_len`: Length of the allocated and initialized memory buffer `buffer`.
+    /// * `written_bytes`: Allocated memory for the number of bytes written.
+    fn write_stream(handle: ConnectionHandle, stream_id: u64, buffer: Ref<u8>, buf_len: size_t, written_bytes: Out<size_t>) -> FFIResult {
         handle.mut_access(&mut move |connection| {
             _write_stream(connection, stream_id, &mut buffer, buf_len, &mut written_bytes).into()
         }).into()
     }
 
-    fn open_stream(handle: ConnectionHandle,stream_direction: u8,opened_stream_id: Out<u64>) -> QuinnResult {
+    /// Opens a stream with a certain directionality.
+    ///
+    /// * `handle`: Valid `ConnectionHandle` pointer for the duration of the function call.
+    /// * `stream_direction`: The direction of the stream that is opened.
+    /// * `opened_stream_id`: Allocated memory for the stream id that is opened.
+    fn open_stream(handle: ConnectionHandle, stream_direction: u8, opened_stream_id: Out<u64>) -> FFIResult {
         handle.mut_access(&mut move |connection| {
            let opened_stream = connection.inner.streams().open(dir_from_u8(stream_direction));
 
@@ -244,6 +324,59 @@ ffi! {
                 Err(QuinnErrorKind::QuinnError {code: 0, reason: "Streams in the given direction are currently exhausted".to_string()})
             }
         }).into()
+    }
+}
+
+ffi! {
+    /// Test function for generating server config.
+    fn default_server_config(out_handle: Out<RustlsServerConfigHandle>) -> FFIResult {
+        // tracing::subscriber::set_global_default(
+        //     tracing_subscriber::FmtSubscriber::builder()
+        //         .with_env_filter("trace")
+        //         .finish(),
+        // )
+        // .unwrap();
+
+        let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
+
+        let (key, cert) = (PrivateKey(key), Certificate(cert));
+        let mut store = RootCertStore::empty();
+        store.add(&cert);
+
+        let mut config = rustls::ServerConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert], key)
+            .unwrap();
+
+        config.key_log = Arc::new(KeyLogFile::new());
+
+        let config = ServerConfig::with_crypto(Arc::new(config));
+
+        unsafe { out_handle.init(RustlsServerConfigHandle::new(ServerConfig::from(config))) }
+
+        FFIResult::ok()
+    }
+
+    /// Test function for generating server config.
+    fn default_client_config(out_handle: Out<RustlsClientConfigHandle>) -> FFIResult {
+        let mut crypto = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth();
+
+        crypto.key_log = Arc::new(KeyLogFile::new());
+
+        unsafe {
+            out_handle.init(RustlsClientConfigHandle::new(ClientConfig::new(Arc::new(
+                crypto,
+            ))));
+        }
+
+        FFIResult::ok()
     }
 }
 
@@ -271,7 +404,7 @@ fn _read_stream(
                 handle.mark_pollable();
             }
             if e == ReadError::Blocked {
-                return Err(QuinnErrorKind::QuinErrorKind(Kind::BufferBlocked));
+                return Err(QuinnErrorKind::QuinErrorKind(FFIResultKind::BufferBlocked));
             }
 
             return Err(e.into());
@@ -322,11 +455,12 @@ fn _stream_id(stream_id: u64) -> Result<StreamId, VarIntBoundsExceeded> {
 }
 
 pub mod callbacks {
+    //! Callbacks that are invoked when events occure
     use crate::{
         ffi::{
             ConnectionHandle,
+            FFIResult,
             Handle,
-            QuinnResult,
         },
         proto::{
             Dir,
@@ -341,211 +475,117 @@ pub mod callbacks {
     use libc::size_t;
     use quinn_proto::VarInt;
 
-    // Callbacks should be initialized before applications runs. Therefore we can unwrap unchecked and allow statics to be mutable.
-    static mut ON_NEW_CONNECTION: Option<extern "C" fn(super::ConnectionHandle, u32)> = None;
-    static mut ON_CONNECTED: Option<extern "C" fn(u32)> = None;
-    static mut ON_CONNECTION_LOST: Option<extern "C" fn(u32)> = None;
-    static mut ON_STREAM_WRITABLE: Option<extern "C" fn(u32, u64, u8)> = None;
-    static mut ON_STREAM_READABLE: Option<extern "C" fn(u32, u64, u8)> = None;
-    static mut ON_STREAM_FINISHED: Option<extern "C" fn(u32, u64, u8)> = None;
-    static mut ON_STREAM_STOPPED: Option<extern "C" fn(u32, u64, u8)> = None;
-    static mut ON_STREAM_AVAILABLE: Option<extern "C" fn(u32, u8)> = None;
-    static mut ON_DATAGRAM_RECEIVED: Option<extern "C" fn(u32)> = None;
-    static mut ON_STREAM_OPENED: Option<extern "C" fn(u32, u64, u8)> = None;
-    static mut ON_TRANSMIT: Option<extern "C" fn(u8, *const u8, size_t, *const IpAddr)> = None;
-    static mut ON_CONNECTION_POLLABLE: Option<extern "C" fn(u32)> = None;
+    /// Generates FFI methods to set callbacks and declares the static variable to store that callback.
+    #[doc(hidden)]
+    macro_rules! set_callbacks {
+        ($(fn $name:ident ( $($arg_ty:ty),* ) set $body:ident)*) => {
+             $(
+                // A static option with external function pointer.
+                static mut $body: Option<extern "C" fn($($arg_ty),*)> = None;
 
-    pub(crate) fn on_new_connection(con: u32, handle: ConnectionHandle) {
-        unsafe {
-            ON_NEW_CONNECTION.unwrap_unchecked()(handle, con);
+                #[no_mangle]
+                /// Set a callback that will be invoked when some event occurs.
+                ///
+                /// See the callback function pointer for what arguments are expected.
+                 pub extern "cdecl" fn $name (callback: extern "C" fn($($arg_ty),*)) -> FFIResult {
+                    unsafe {
+                        $body = Some(callback);
+                    }
+                    FFIResult::ok()
+                }
+              )*
+        };
+    }
+
+    /// Generates callback invoke methods.
+    #[doc(hidden)]
+    macro_rules! set_invokers {
+        ($(invoke $name:ident with $fn_name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) )*) => {
+             $(
+                /// Invoke the callback.
+                pub(crate) fn $fn_name($($arg_ident: $arg_ty),*) {
+                    unsafe {
+                       $name.unwrap_unchecked()($($arg_ident),*);
+                    }
+                }
+              )*
+        };
+
+        // Allows parsing parameters with `call(int as u8)` for example.
+        ($(invoke $name:ident with $fn_name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) { call ($($body:expr),* ) }) *) => {
+             $(
+                /// Invoke the callback.
+                pub(crate) fn $fn_name($($arg_ident: $arg_ty),*) {
+                    unsafe {
+                       $name.unwrap_unchecked()($($body), *);
+                    }
+                }
+              )*
+        };
+    }
+
+    set_invokers! {
+        invoke ON_NEW_CONNECTION with on_new_connection(handle: ConnectionHandle, con: u32)
+
+        invoke ON_CONNECTED with on_connected(con: u32)
+
+        invoke ON_CONNECTION_LOST with on_connection_lost(con: u32)
+
+        invoke ON_STREAM_AVAILABLE with on_stream_available(con: u32, dir: u8)
+
+        invoke ON_DATAGRAM_RECEIVED with on_datagram_received(con: u32)
+
+        invoke ON_STREAM_OPENED with on_stream_opened(con: u32, stream_id: u64, dir: u8)
+
+        invoke ON_CONNECTION_POLLABLE with on_connection_pollable(con: u32)
+
+    }
+
+    set_invokers! {
+        invoke ON_STREAM_READABLE with on_stream_readable(con: u32, stream_id: StreamId) {
+            call (con,VarInt::from(stream_id).into(),stream_id.dir() as u8)
+        }
+
+        invoke ON_STREAM_WRITABLE with on_stream_writable(con: u32, stream_id: StreamId) {
+            call (con,VarInt::from(stream_id).into(),stream_id.dir() as u8)
+        }
+
+        invoke ON_STREAM_FINISHED with on_stream_finished(con: u32, stream_id: StreamId) {
+            call (con,VarInt::from(stream_id).into(),stream_id.dir() as u8)
+        }
+
+        invoke ON_STREAM_STOPPED with on_stream_stopped(con: u32, stream_id: StreamId) {
+            call (con,VarInt::from(stream_id).into(),stream_id.dir() as u8)
+        }
+
+        invoke ON_TRANSMIT with on_transmit(endpoint_id: u8, transmit: Transmit) {
+            call (endpoint_id,transmit.contents.as_ptr(),transmit.contents.len(),&transmit.destination.into())
         }
     }
 
-    pub(crate) fn on_connected(con: u32) {
-        unsafe {
-            ON_CONNECTED.unwrap_unchecked()(con);
-        }
-    }
+    set_callbacks! {
+        fn set_on_new_connection(super::ConnectionHandle, u32) set ON_NEW_CONNECTION
 
-    pub(crate) fn on_connection_lost(con: u32) {
-        unsafe {
-            ON_CONNECTION_LOST.unwrap_unchecked()(con);
-        }
-    }
+        fn set_on_connected(u32) set ON_CONNECTED
 
-    pub(crate) fn on_stream_readable(con: u32, stream_id: StreamId) {
-        unsafe {
-            ON_STREAM_READABLE.unwrap_unchecked()(
-                con,
-                VarInt::from(stream_id).into(),
-                stream_id.dir() as u8,
-            );
-        }
-    }
+        fn set_on_connection_lost(u32) set ON_CONNECTION_LOST
 
-    pub(crate) fn on_stream_writable(con: u32, stream_id: StreamId) {
-        unsafe {
-            ON_STREAM_WRITABLE.unwrap_unchecked()(
-                con,
-                VarInt::from(stream_id).into(),
-                stream_id.dir() as u8,
-            );
-        }
-    }
+        fn set_on_stream_writable(u32, u64, u8) set ON_STREAM_WRITABLE
 
-    pub(crate) fn on_stream_finished(con: u32, stream_id: StreamId) {
-        unsafe {
-            ON_STREAM_FINISHED.unwrap_unchecked()(
-                con,
-                VarInt::from(stream_id).into(),
-                stream_id.dir() as u8,
-            );
-        }
-    }
+        fn set_on_stream_readable(u32, u64, u8) set ON_STREAM_READABLE
 
-    pub(crate) fn on_stream_stopped(con: u32, stream_id: StreamId) {
-        unsafe {
-            ON_STREAM_STOPPED.unwrap_unchecked()(
-                con,
-                VarInt::from(stream_id).into(),
-                stream_id.dir() as u8,
-            );
-        }
-    }
+        fn set_on_stream_finished(u32, u64, u8) set ON_STREAM_FINISHED
 
-    pub(crate) fn on_stream_available(con: u32, dir: Dir) {
-        unsafe {
-            ON_STREAM_AVAILABLE.unwrap_unchecked()(con, dir as u8);
-        }
-    }
+        fn set_on_stream_stopped(u32, u64, u8) set ON_STREAM_STOPPED
 
-    pub(crate) fn on_datagram_received(con: u32) {
-        unsafe {
-            ON_DATAGRAM_RECEIVED.unwrap_unchecked()(con);
-        }
-    }
+        fn set_on_stream_available(u32, u8) set ON_STREAM_AVAILABLE
 
-    pub(crate) fn on_stream_opened(con: u32, stream_id: u64, dir: Dir) {
-        unsafe {
-            ON_STREAM_OPENED.unwrap_unchecked()(con, stream_id, dir as u8);
-        }
-    }
+        fn set_on_datagram_received(u32) set ON_DATAGRAM_RECEIVED
 
-    pub(crate) fn on_transmit(endpoint_id: u8, transmit: Transmit) {
-        unsafe {
-            let addr = transmit.destination.into();
-            ON_TRANSMIT.unwrap_unchecked()(
-                endpoint_id,
-                transmit.contents.as_ptr(),
-                transmit.contents.len(),
-                &addr,
-            );
-        }
-    }
+        fn set_on_stream_opened(u32, u64, u8) set ON_STREAM_OPENED
 
-    pub(crate) fn on_connection_pollable(con: u32) {
-        unsafe {
-            ON_CONNECTION_POLLABLE.unwrap_unchecked()(con);
-        }
-    }
+        fn set_on_transmit(u8, *const u8, size_t, *const IpAddr) set ON_TRANSMIT
 
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_new_connection(
-        cb: extern "C" fn(super::ConnectionHandle, u32),
-    ) -> QuinnResult {
-        unsafe {
-            ON_NEW_CONNECTION = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_connected(cb: extern "C" fn(u32)) -> QuinnResult {
-        unsafe {
-            ON_CONNECTED = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_connection_lost(cb: extern "C" fn(u32)) -> QuinnResult {
-        unsafe {
-            ON_CONNECTION_LOST = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_writable(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_WRITABLE = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_readable(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_READABLE = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_finished(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_FINISHED = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub extern "cdecl" fn set_on_stream_stopped(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_STOPPED = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub(crate) fn set_on_stream_available(cb: extern "C" fn(u32, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_AVAILABLE = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub(crate) fn set_on_datagram_received(cb: extern "C" fn(u32)) -> QuinnResult {
-        unsafe {
-            ON_DATAGRAM_RECEIVED = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub(crate) fn set_on_stream_opened(cb: extern "C" fn(u32, u64, u8)) -> QuinnResult {
-        unsafe {
-            ON_STREAM_OPENED = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub(crate) fn set_on_transmit(
-        cb: extern "C" fn(u8, *const u8, size_t, *const IpAddr),
-    ) -> QuinnResult {
-        unsafe {
-            ON_TRANSMIT = Some(cb);
-        }
-        QuinnResult::ok()
-    }
-
-    #[no_mangle]
-    pub(crate) fn set_on_pollable_connection(cb: extern "C" fn(u32)) -> QuinnResult {
-        unsafe {
-            ON_CONNECTION_POLLABLE = Some(cb);
-        }
-        QuinnResult::ok()
+        fn set_on_pollable_connection(u32) set ON_CONNECTION_POLLABLE
     }
 }

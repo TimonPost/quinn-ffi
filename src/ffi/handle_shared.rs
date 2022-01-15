@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-/// A shared handle that can be accessed concurrently by multiple threads.
+/// A shared handle that can be read-accessed concurrently by multiple threads.
 ///
 /// The interior value can be treated like `&T`.
 #[repr(transparent)]
@@ -26,6 +26,7 @@ impl<'a, T> HandleShared<'a, T>
 where
     T: Send + Sync,
 {
+    /// Allocates and initializes memory for the passed type.
     pub fn alloc(value: T) -> Self
     where
         T: 'static,
@@ -40,7 +41,9 @@ impl<'a, T> HandleShared<'a, T>
 where
     T: Send + Sync,
 {
-    // There are no other live references and the handle won't be used again
+    /// Deallocates and initializes memory for the passed type.
+    ///
+    /// There are no other live references and the handle won't be used again
     pub unsafe fn dealloc<R>(handle: Self, f: impl FnOnce(T) -> R) -> R {
         let v = Box::from_raw(handle.0 as *mut T);
         f(*v)

@@ -1,3 +1,5 @@
+//! FFI layer that exposes functions and types for interacting with Quinn.
+
 #[cfg(feature = "unsafe-api")]
 #[macro_use]
 pub mod unsafe_api;
@@ -10,12 +12,12 @@ pub use safe_api::*;
 #[cfg(feature = "unsafe-api")]
 pub use unsafe_api::*;
 
-pub mod bindings;
+mod bindings;
+mod ffi_result;
 mod handle_shared;
 mod handle_sync;
 mod null;
 mod out;
-mod quinn_result;
 mod reference;
 mod transport_config;
 
@@ -23,15 +25,34 @@ pub use handle_shared::HandleShared;
 pub use handle_sync::HandleSync;
 pub use null::IsNull;
 pub use out::Out;
-pub use quinn_result::{
-    Kind,
+
+pub use ffi_result::{
+    FFIResult,
+    FFIResultKind,
     QuinnError,
-    QuinnResult,
 };
+
 pub use reference::{
     Ref,
     RefMut,
 };
+
+pub use bindings::{
+    accept_stream,
+    connect_client,
+    create_client_endpoint,
+    create_server_endpoint,
+    default_client_config,
+    default_server_config,
+    handle_datagram,
+    last_error,
+    open_stream,
+    poll_connection,
+    read_stream,
+    write_stream,
+};
+
+pub use bindings::callbacks;
 
 use crate::proto_impl::QuinnErrorKind;
 

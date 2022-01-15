@@ -1,5 +1,5 @@
 use crate::{
-    ffi::bindings::callbacks,
+    ffi::callbacks,
     proto,
     proto::VarInt,
     proto_impl::{
@@ -19,23 +19,28 @@ use std::{
     time::Instant,
 };
 
+/// Events for the connection.
 #[derive(Debug)]
 pub enum ConnectionEvent {
+    /// Connection should close.
     Close { error_code: VarInt, reason: Vec<u8> },
+    /// Protocol logic.
     Proto(proto::ConnectionEvent),
+    /// Connection should ping.
     Ping,
 }
 
+/// A QUIC connection using quinn-proto.
 pub struct ConnectionImpl {
     pub(crate) inner: proto::Connection,
-    pub connected: bool,
-    pub connection_events: mpsc::Receiver<ConnectionEvent>,
-    pub endpoint_events: Sender<(proto::ConnectionHandle, EndpointEvent)>,
-    pub connection_handle: proto::ConnectionHandle,
+    pub(crate) connection_handle: proto::ConnectionHandle,
 
+    connected: bool,
+    connection_events: mpsc::Receiver<ConnectionEvent>,
+    endpoint_events: Sender<(proto::ConnectionHandle, EndpointEvent)>,
     timer_deadline: Option<Instant>,
     last_poll: Instant,
-    pub endpoint_poll_notifier: Sender<u8>,
+    endpoint_poll_notifier: Sender<u8>,
 }
 
 impl ConnectionImpl {
@@ -60,6 +65,15 @@ impl ConnectionImpl {
 }
 
 impl ConnectionImpl {
+    /// Polls the connection.
+    ///
+    /// 1. Handles connection events.
+    /// 2. Handles transmits.
+    /// 3. Handles timeout
+    /// 4. Handles endpoint events.
+    /// 5. Handles app events.
+    ///
+    /// Polling the connection might result in callbacks to the client application.
     pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
         let _ = self.handle_connection_events();
         let mut poll_again = self.handle_transmits()?;
@@ -72,13 +86,16 @@ impl ConnectionImpl {
         Ok(())
     }
 
-    /// Mark the connection as pollable.
+    /// Marks the connection as pollable.
     /// Connection should be polled when IO operations are performed, and timeout happened.
     ///
-    /// This will invoke a callback.
+    /// This will poll the connection if `auto-poll` feature is enabled, else it will invoke the client application set callback.
     pub fn mark_pollable(&mut self) {
-        self.poll();
-        //callbacks::on_connection_pollable(self.connection_id())
+        if cfg!(feature = "auto-poll") {
+            self.poll();
+        } else {
+            callbacks::on_connection_pollable(self.connection_id())
+        }
     }
 
     fn handle_timer(&mut self) -> bool {
@@ -104,12 +121,16 @@ impl ConnectionImpl {
     }
 
     fn handle_transmits(&mut self) -> Result<bool, QuinnErrorKind> {
+        let mut should_notify = false;
         while let Some(t) = self.inner.poll_transmit(Instant::now(), 1) {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Transmit(t)))?;
-
-            self.endpoint_poll_notifier.send(0)?;
+            should_notify = true;
             // TODO: when max transmits return true.
+        }
+
+        if should_notify {
+            self.endpoint_poll_notifier.send(0)?;
         }
 
         return Ok(false);
@@ -159,21 +180,12 @@ impl ConnectionImpl {
                 Stream(StreamEvent::Writable { id }) => {
                     callbacks::on_stream_writable(self.connection_id(), id)
                 }
-                Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
-                    if let Some(stream_id) = self.inner.streams().accept(Dir::Uni) {
+                Stream(StreamEvent::Opened { dir }) => {
+                    if let Some(stream_id) = self.inner.streams().accept(dir) {
                         callbacks::on_stream_opened(
                             self.connection_id(),
                             VarInt::from(stream_id).into_inner(),
-                            Dir::Uni,
-                        );
-                    }
-                }
-                Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
-                    if let Some(stream_id) = self.inner.streams().accept(Dir::Bi) {
-                        callbacks::on_stream_opened(
-                            self.connection_id(),
-                            VarInt::from(stream_id).into_inner(),
-                            Dir::Bi,
+                            dir as u8,
                         );
                     }
                 }
@@ -184,7 +196,7 @@ impl ConnectionImpl {
                     callbacks::on_stream_readable(self.connection_id(), id);
                 }
                 Stream(StreamEvent::Available { dir }) => {
-                    callbacks::on_stream_available(self.connection_id(), dir);
+                    callbacks::on_stream_available(self.connection_id(), dir as u8);
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     callbacks::on_stream_finished(self.connection_id(), id);

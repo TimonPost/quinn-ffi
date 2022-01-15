@@ -7,7 +7,7 @@ use std::{
     io,
 };
 
-use crate::ffi::Kind;
+use crate::ffi::FFIResultKind;
 use quinn_proto::{
     ReadableError,
     VarIntBoundsExceeded,
@@ -33,11 +33,16 @@ macro_rules! impl_error {
     };
 }
 
+/// An `Error` implementing type that can be returned in a `Result`.
 #[derive(Debug)]
 pub enum QuinnErrorKind {
-    QuinErrorKind(Kind),
+    /// A quinn error kind.
+    QuinErrorKind(FFIResultKind),
+    /// A quinn error with error code and reason.
     QuinnError { code: u32, reason: String },
+    /// FFI related error.
     FFIError,
+    /// IO Error.
     IoError(io::Error),
 }
 

@@ -15,7 +15,9 @@
 
 ## Main Components
 
-Rust and C# are both safe languages, however they operate in different paradigms. The FFI is inherently unsafe between the two and therefore the right care has to be taken when designing this in-between layer.  
+Rust and C# are both safe languages, however they operate in different paradigms. 
+The FFI is inherently unsafe between the two and therefore the right care has to be taken when designing this in-between layer. 
+This library implements various ideas from this [blog][blog] which is quite a popular reference to build FFI for rust and C#.  
 
 ### Handles
 This library tries to minimize insecurity by introducing `Handle<T>`. A `Handle` is a wrapper of a pointer allocated on the heap. This `Handle` is bound by Rust safety rules. Because of those rules the calling application is prevented from abusing rust its rules. This is especially the case of C# were shared write/read access is not uncommon. 
@@ -36,10 +38,13 @@ unsafe extern "cdecl" fn read_stream(handle: ConnectionHandle);
 internal static extern QuinnResult read_stream(ConnectionSafeHandle handle);
 read_stream(MyCreatedHandle)
 ```
+In C#, `ConnectionSafeHandle` is a [SafeHandle][SafeHandle] which wraps a pointer.
+A `Safe Handle` in C# and `Handle` in Rust are both pointers wrapped by some type.
+Any pointer given to a particular `external` function ought to be pointing to memory of a particular `Handle` type.
 
-A `Handle` is a pointer for the FFI layer, and any pointer given to a particular `external` function ought to be pointing to memory of that type. In C#, `ConnectionSafeHandle` is a [SafeHandle][SafeHandle] which wraps a pointer. A `Safe Handle` in C# and `Handle` in Rust are used as two sides of the same coin. This allows the pointer to be shared from rust to C# and back again.
-
-There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an imutable and mutable pointer to a resource allocated by C#. Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. This allows us to work with the C# `out` were the called function initializes the calling function its state. 
+There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an imutable and mutable pointer to a resource allocated by C#. 
+Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. 
+This allows us to work with the C# `out` were the called function initializes the calling function its state. 
 
 ### [Callbacks][callbacks]
 
@@ -89,3 +94,4 @@ at your option.
 [QUIC]: https://en.wikipedia.org/wiki/QUIC
 [DotQuic]: https://github.com/TimonPost/dot-sharp
 [SafeHandle]: https://docs.microsoft.com/en-us/dotnet/api/system.runtime.interopservices.safehandle?view=net-6.0
+[blog]: https://blog.datalust.co/rust-at-datalust-how-we-integrate-rust-with-csharp/

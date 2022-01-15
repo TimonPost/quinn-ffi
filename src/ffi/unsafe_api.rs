@@ -1,5 +1,5 @@
-///! This module doesnt validate if pointers are null, and does not catch panics.
-///! Its unsafe but might be faster since there is less overhead for FFI calls.
+//! This module doesnt validate if pointers are null, and does not catch panics.
+//! Its unsafe but might be faster since there is less overhead for FFI calls.
 use crate::{
     ffi::{
         Handle,
@@ -138,11 +138,11 @@ Wrap an FFI function.
 This macro doesnt implement `NotNull::not_null` checks and doesnt catches any panics.
 */
 macro_rules! ffi {
-    ($(fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> QuinnResult $body:expr)*) => {
+    ($(fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> FFIResult $body:expr)*) => {
         $(
             #[allow(unsafe_code, unused_attributes)]
             #[no_mangle]
-            pub unsafe extern "cdecl" fn $name( $(mut $arg_ident : $arg_ty),* ) -> QuinnResult {
+            pub unsafe extern "cdecl" fn $name( $(mut $arg_ident : $arg_ty),* ) -> FFIResult {
                 $body
             }
         )*

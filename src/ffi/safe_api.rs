@@ -1,8 +1,9 @@
-///! This module contains FFI handels and the ffi function generator macro.
-///
-///! This API validates if pointers are null and catches panics.
-///! It also protects handle access with a mutex.
-///! It is more safe then the unsafe api however it introduces some extra logic to keep this safe which could come at a little performance cost.
+//! This module contains FFI handels and the ffi function generator macro.
+//
+//! This API validates if pointers are null and catches panics.
+//! It also protects handle access with a mutex.
+//! It is more safe then the unsafe api however it introduces some extra logic to keep this safe which could come at a little performance cost.
+
 use crate::{
     ffi::{
         Handle,
@@ -146,23 +147,26 @@ The macro doesn't support generics or argument patterns that are more complex th
 */
 
 macro_rules! ffi {
-    ($(fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> QuinnResult $body:expr)*) => {
+    (
+        $(  $(#[$meta:meta])* fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> FFIResult $body:expr)*
+    ) => {
         $(
+            $(#[$meta])*
             #[allow(unsafe_code, unused_attributes)]
             #[no_mangle]
-            pub unsafe extern "cdecl" fn $name( $($arg_ident : $arg_ty),* ) -> QuinnResult {
+            pub unsafe extern "cdecl" fn $name( $($arg_ident : $arg_ty),* ) -> FFIResult {
                 #[allow(unused_mut)]
-                fn call( $(mut $arg_ident: $arg_ty),* ) -> QuinnResult {
+                fn call( $(mut $arg_ident: $arg_ty),* ) -> FFIResult {
                     $(
                         if $crate::ffi::IsNull::is_null(&$arg_ident) {
-                            return QuinnResult::argument_null().context(QuinnError::new(0, stringify!($arg_ident).to_string()));
+                            return FFIResult::argument_null().context(QuinnError::new(0, stringify!($arg_ident).to_string()));
                         }
                     )*
 
                     $body
                 }
 
-                QuinnResult::catch(move || call( $($arg_ident),* ))
+                FFIResult::catch(move || call( $($arg_ident),* ))
             }
         )*
     };

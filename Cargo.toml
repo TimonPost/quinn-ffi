@@ -19,6 +19,7 @@ tracing-subscriber = {version="0.3.5", features=["env-filter"]}
 crossbeam-channel = "0.5"
 
 [features]
-default = ["safe-api"]
+default = ["safe-api", "auto-poll"]
 safe-api = []
 unsafe-api = []
+auto-poll = []

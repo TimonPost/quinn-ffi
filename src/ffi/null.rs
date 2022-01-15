@@ -4,6 +4,7 @@ macro_rules! never_null {
     ($($t:ty),*) => {
         $(
             impl IsNull for $t {
+                /// Returns false since this type can not be null.
                 fn is_null(&self) -> bool {
                     false
                 }
@@ -12,20 +13,20 @@ macro_rules! never_null {
     }
 }
 
-/**
-Whether or not a value passed across an FFI boundary is null.
-*/
+/// Whether or not a value passed across an FFI boundary is null.
 pub trait IsNull {
     fn is_null(&self) -> bool;
 }
 
 impl<T: ?Sized> IsNull for *const T {
+    /// Returns if the pointer is null.
     fn is_null(&self) -> bool {
         <*const T>::is_null(*self)
     }
 }
 
 impl<T: ?Sized> IsNull for *mut T {
+    /// Returns if the pointer is null.
     fn is_null(&self) -> bool {
         <*mut T>::is_null(*self)
     }
