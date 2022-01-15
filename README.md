@@ -46,9 +46,9 @@ There are several other types that implement similar semantics: `Ref`, `RefMut` 
 Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. 
 This allows us to work with the C# `out` were the called function initializes the calling function its state. 
 
-### [Callbacks][callbacks]
+There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an immutable and mutable pointer to a resource allocated by C#. Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. This allows us to work with the C# `out` were the called function initializes the calling function its state.
 
-There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an immutable and mutable pointer to a resource allocated by C#. Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. This allows us to work with the C# `out` were the called function initializes the calling function its state. 
+### [Callbacks][callbacks]
 
 Invoking Rust with C# comes at some cost due to `PInvoke` function. It is seen as a good practice to reduce C# => Rust calls as much as possible. Since events occur once in a while this library allows to set callbacks that are called when events trigger.  See the [docs][callbacks] for what function interface the callback methods have to adhere to. 
 
