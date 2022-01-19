@@ -71,10 +71,11 @@ impl<'a> Handle for EndpointHandle<'a> {
         &mut self,
         cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
     ) -> Result<(), QuinnErrorKind> {
-        let mut lock = self.lock().unwrap();
         //println!(" ++ endpoint lock");
+        let mut lock = self.lock().unwrap();
         let a = cb(&mut lock);
         //println!(" ++ end endpoint lock");
+        drop(lock);
         a
     }
 
@@ -125,11 +126,11 @@ impl<'a> Handle for ConnectionHandle<'a> {
         &mut self,
         cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
     ) -> Result<(), QuinnErrorKind> {
+        //println!("\t++ connection lock");
         let mut lock = self.lock().unwrap();
-        // println!(" ++ connection lock");
         let a = cb(&mut lock);
         drop(lock);
-        //println!("-- end connection lock");
+        //println!("\t-- end connection lock");
         a
     }
 

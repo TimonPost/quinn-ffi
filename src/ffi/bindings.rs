@@ -22,13 +22,11 @@ use crate::{
         StreamId,
     },
     proto_impl::{
-        generate_self_signed_cert,
         ConnectionImpl,
         EndpointImpl,
         EndpointPoller,
         IpAddr,
         QuinnErrorKind,
-        SkipServerVerification,
     },
 };
 use bytes::BytesMut;
@@ -48,6 +46,7 @@ use rustls::{
     RootCertStore,
 };
 use std::{
+    fs,
     io::Write,
     net::SocketAddr,
     sync::{
@@ -147,19 +146,31 @@ ffi! {
     /// Use the returned `ConnectionHandle` for connection related FFI functions.
     fn connect_client(
         handle: EndpointHandle,
+        host_bytes: Ref<u8>,
+        host_bytes_len: u32,
         address: IpAddr,
         out_connection: Out<ConnectionHandle>,
         out_connection_id: Out<u32>
     ) -> FFIResult {
+        let host_bytes = unsafe {host_bytes.as_bytes(host_bytes_len as usize).to_vec()};
+        let host_name = String::from_utf8(host_bytes).expect("Key path not in utf8 format");
+
+        println!("connect host: {:?}", host_name);
+
         handle.mut_access(&mut |endpoint| {
-            // TODO: remove localhost with Ref<u8> pointing to string.
-            let connection = endpoint.connect(address.into(), "localhost").unwrap();
+            let mut connection = endpoint.connect(address.into(), &host_name).unwrap();
+            connection.mark_pollable();
+
+            let c_handle = connection.connection_handle;
+            let connection_handle = super::ConnectionHandle::new(connection);
+            endpoint.register_pollable_connection(c_handle, connection_handle.clone());
 
             unsafe {
-                out_connection_id.init(connection.connection_handle.0 as u32);
-                out_connection.init(ConnectionHandle::new(connection))
+                out_connection_id.init(c_handle.0 as u32);
+                out_connection.init(connection_handle)
             }
-           Ok(())
+
+        Ok(())
        }).into()
     }
 
@@ -170,6 +181,7 @@ ffi! {
     /// * `length`: The length of the buffer storing the datagram.
     /// * `address`: A type defining a socket address. Make sure to use correct layout.
     fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> FFIResult {
+
         handle.mut_access(&mut |endpoint| {
             let slice = unsafe { data.as_bytes(length) };
 
@@ -181,15 +193,22 @@ ffi! {
             {
                 Some((handle, DatagramEvent::NewConnection(conn))) => {
                     let mut connection = endpoint.add_connection(handle, conn);
-                    connection.poll();
 
-                    let connection_handle = super::ConnectionHandle::new(connection);
+                    let mut connection_handle = super::ConnectionHandle::new(connection);
                     endpoint.register_pollable_connection(handle, connection_handle.clone());
 
-                    callbacks::on_new_connection( connection_handle, handle.0 as u32,);
+                    endpoint.poll();
+
+                    connection_handle.mut_access(&mut |lock| {
+                        lock.mark_pollable();
+                        Ok(())
+                    });
+
+                    callbacks::on_new_connection(connection_handle, handle.0 as u32, endpoint.id as u32);
                 }
                 Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                     endpoint.forward_event_to_connection(handle, event)?;
+                    endpoint.poll();
 
                     endpoint.poll_connection(handle);
                 }
@@ -197,10 +216,8 @@ ffi! {
                     println!("None handled");
                 }
             }
-
             Ok(())
         }).into()
-
     }
 }
 
@@ -256,7 +273,6 @@ ffi! {
     /// * `stream_id_out`: Allocated memory for the `stream_id` of the accepted stream.
     fn accept_stream(handle: ConnectionHandle, stream_direction: u8, stream_id_out: Out<u64>) -> FFIResult {
         let dir = dir_from_u8(stream_direction);
-        println!("access read");
         handle.mut_access(&mut |connection| {
            let result = if let Some(stream_id) = connection.inner.streams().accept(dir) {
                 connection.mark_pollable();
@@ -268,7 +284,6 @@ ffi! {
                 Err(QuinnErrorKind::QuinnError {code: 0, reason: "No stream to accept!".to_string()})
             };
 
-            println!("after mut access: {:?}", result);
             result
         }).into()
 
@@ -327,57 +342,112 @@ ffi! {
     }
 }
 
+enum TlsVersion {
+    Tls2,
+    Tls3,
+}
+// fn create_test_certificate(out_handle: Out<RustlsServerConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
+//
+// }
+
 ffi! {
-    /// Test function for generating server config.
-    fn default_server_config(out_handle: Out<RustlsServerConfigHandle>) -> FFIResult {
+    /// Creates and configures a server crypto configuration.
+    ///
+    /// * `out_handle`: Allocated memory for a pointer to a `RustlsServerConfigHandle`.
+    /// * `cert_path`: A pointer to a utf8 byte buffer storing the path to the certificate.
+    /// * `cert_path_length`: The length of `cert_path`
+    /// * `key_path`: A pointer to a utf8 byte buffer storing the path to the private key.
+    /// * `key_path_length`: The length of `key_path`
+    ///
+    /// * `cert` The certificate must be DER-encoded X.509.
+    /// * `key` The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
+    ///
+    /// Note that this default config provides only high-quality suites, doesnt support any poor-quality groups, and accepts only TLS 1.2 and TLS 1.3.
+    fn create_server_config(out_handle: Out<RustlsServerConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
+         //TODO: Make it possible to enable trace via feature flag.
         // tracing::subscriber::set_global_default(
-        //     tracing_subscriber::FmtSubscriber::builder()
-        //         .with_env_filter("trace")
-        //         .finish(),
+        // tracing_subscriber::FmtSubscriber::builder()
+        //     .with_env_filter("trace")
+        //     .finish(),
         // )
         // .unwrap();
 
-        let (key, cert) = generate_self_signed_cert("cert.der", "key.der");
+        let (cert, key, store) = unsafe { get_cert_key(&cert_path, cert_path_lenght, &key_path, key_path_lenght) };
 
-        let (key, cert) = (PrivateKey(key), Certificate(cert));
-        let mut store = RootCertStore::empty();
-        store.add(&cert);
-
-        let mut config = rustls::ServerConfig::builder()
+        let mut crypto = rustls::ServerConfig::builder()
             .with_safe_default_cipher_suites()
             .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS13])
+            .with_safe_default_protocol_versions()
             .unwrap()
             .with_no_client_auth()
             .with_single_cert(vec![cert], key)
-            .unwrap();
+            .expect("bad certificate/key");
 
-        config.key_log = Arc::new(KeyLogFile::new());
+        crypto.key_log = Arc::new(KeyLogFile::new());
 
-        let config = ServerConfig::with_crypto(Arc::new(config));
+        let config = ServerConfig::with_crypto(Arc::new(crypto));
 
         unsafe { out_handle.init(RustlsServerConfigHandle::new(ServerConfig::from(config))) }
 
         FFIResult::ok()
     }
 
-    /// Test function for generating server config.
-    fn default_client_config(out_handle: Out<RustlsClientConfigHandle>) -> FFIResult {
+    /// Creates and configures a client crypto configuration.
+    ///
+    /// * `out_handle`: Allocated memory for a pointer to a `RustlsServerConfigHandle`.
+    /// * `cert_path`: A pointer to a utf8 byte buffer storing the path to the certificate.
+    /// * `cert_path_length`: The length of `cert_path`
+    /// * `key_path`: A pointer to a utf8 byte buffer storing the path to the private key.
+    /// * `key_path_length`: The length of `key_path`
+    ///
+    /// * `cert` The certificate must be DER-encoded X.509.
+    /// * `key` The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
+    ///
+    /// Note that this default config provides only high-quality suites, doesnt support any poor-quality groups, and accepts only TLS 1.2 and TLS 1.3.
+    fn create_client_config(out_handle: Out<RustlsClientConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
+        let (cert, key, store) = unsafe { get_cert_key(&cert_path, cert_path_lenght, &key_path, key_path_lenght) };
+
         let mut crypto = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(SkipServerVerification::new())
-            .with_no_client_auth();
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(store)
+            .with_single_cert(vec![cert], key)
+            .expect("bad certificate/key");
 
         crypto.key_log = Arc::new(KeyLogFile::new());
 
+        let config = ClientConfig::new(Arc::new(crypto));
+
         unsafe {
-            out_handle.init(RustlsClientConfigHandle::new(ClientConfig::new(Arc::new(
-                crypto,
-            ))));
+            out_handle.init(RustlsClientConfigHandle::new(config));
         }
 
         FFIResult::ok()
     }
+}
+
+unsafe fn get_cert_key(
+    cert_path: &Ref<u8>,
+    cert_path_length: u32,
+    key_path: &Ref<u8>,
+    key_path_lenght: u32,
+) -> (Certificate, PrivateKey, RootCertStore) {
+    let cert_path_bytes = cert_path.as_bytes(cert_path_length as usize).to_vec();
+    let cert_path = String::from_utf8(cert_path_bytes).expect("Key path not in utf8 format");
+
+    let key_path_bytes = key_path.as_bytes(key_path_lenght as usize).to_vec();
+    let key_path = String::from_utf8(key_path_bytes).expect("Key path not in utf8 format");
+
+    let cert = fs::read(cert_path).expect("cert path not existing");
+    let key = fs::read(key_path).expect("key path not existing");
+
+    let (key, cert) = (PrivateKey(key), Certificate(cert));
+    let mut store = RootCertStore::empty();
+    store.add(&cert).unwrap();
+
+    (cert, key, store)
 }
 
 fn _read_stream(
@@ -413,8 +483,10 @@ fn _read_stream(
     }
 
     if result.finalize().should_transmit() {
-        handle.mark_pollable();
+        //handle.mark_pollable();
     }
+
+    handle.mark_pollable();
 
     Ok(())
 }
@@ -433,6 +505,7 @@ fn _write_stream(
     unsafe {
         written_bytes.init(result);
     }
+
     handle.mark_pollable();
 
     Ok(())
@@ -525,7 +598,7 @@ pub mod callbacks {
     }
 
     set_invokers! {
-        invoke ON_NEW_CONNECTION with on_new_connection(handle: ConnectionHandle, con: u32)
+        invoke ON_NEW_CONNECTION with on_new_connection(handle: ConnectionHandle, con: u32, endpoint_id: u32)
 
         invoke ON_CONNECTED with on_connected(con: u32)
 
@@ -564,7 +637,7 @@ pub mod callbacks {
     }
 
     set_callbacks! {
-        fn set_on_new_connection(super::ConnectionHandle, u32) set ON_NEW_CONNECTION
+        fn set_on_new_connection(super::ConnectionHandle, u32, u32) set ON_NEW_CONNECTION
 
         fn set_on_connected(u32) set ON_CONNECTED
 

@@ -76,13 +76,12 @@ impl ConnectionImpl {
     /// Polling the connection might result in callbacks to the client application.
     pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
         let _ = self.handle_connection_events();
-        let mut poll_again = self.handle_transmits()?;
-        poll_again |= self.handle_timer();
+
+        let mut poll_again = self.handle_timer();
         let _ = self.handle_endpoint_events();
         self.handle_app_events();
-        if poll_again {
-            self.mark_pollable();
-        }
+        poll_again |= self.handle_transmits()?;
+
         Ok(())
     }
 
@@ -93,6 +92,7 @@ impl ConnectionImpl {
     pub fn mark_pollable(&mut self) {
         if cfg!(feature = "auto-poll") {
             self.poll();
+            self.endpoint_poll_notifier.send(0);
         } else {
             callbacks::on_connection_pollable(self.connection_id())
         }
@@ -129,15 +129,11 @@ impl ConnectionImpl {
             // TODO: when max transmits return true.
         }
 
-        if should_notify {
-            self.endpoint_poll_notifier.send(0)?;
-        }
-
-        return Ok(false);
+        return Ok(should_notify);
     }
 
     fn handle_endpoint_events(&mut self) -> Result<(), QuinnErrorKind> {
-        if let Some(event) = self.inner.poll_endpoint_events() {
+        while let Some(event) = self.inner.poll_endpoint_events() {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Proto(event)))?;
             self.endpoint_poll_notifier.send(0)?;

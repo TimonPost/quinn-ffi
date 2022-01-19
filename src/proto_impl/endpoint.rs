@@ -63,7 +63,7 @@ pub enum EndpointEvent {
 /// This polling happens on its own thread.
 pub struct EndpointPoller {
     receiver: mpsc::Receiver<u8>,
-    try_again: bool,
+    loop_again: bool,
     endpoint_ref: Arc<Mutex<EndpointImpl>>,
 }
 
@@ -75,7 +75,7 @@ impl EndpointPoller {
             EndpointPoller {
                 endpoint_ref,
                 receiver,
-                try_again: false,
+                loop_again: false,
             },
             sender,
         )
@@ -84,21 +84,35 @@ impl EndpointPoller {
     /// Starts polling the endpoint.
     /// This will start a new thread.
     pub fn start_polling(mut self) {
-        thread::spawn(move || loop {
-            if !self.try_again {
-                let _ = self.receiver.recv();
-            }
+        thread::spawn(move || {
+            let mut spin_counter = 0;
+            loop {
+                if !self.loop_again {
+                    let _ = self.receiver.recv();
+                }
 
-            match self.endpoint_ref.try_lock() {
-                Err(TryLockError::WouldBlock) => {
-                    // if blocking, spin thread a bit till lock is released.
-                    self.try_again = true;
+                if self.loop_again {
+                    spin_counter += 1;
                 }
-                Ok(mut e) => {
-                    e.poll().expect("Endpoint polling thread panicked!");
-                    self.try_again = false;
+
+                if spin_counter == 0 || (self.loop_again && spin_counter % 1000 == 0) {
+                    let lock = self.endpoint_ref.try_lock();
+                    match lock {
+                        Err(TryLockError::WouldBlock) => {
+                            // if blocking, spin thread a bit till lock is released.
+                            self.loop_again = true;
+                            spin_counter += 1;
+                        }
+                        Ok(mut e) => {
+                            spin_counter = 0;
+                            e.poll().expect("Endpoint polling thread panicked!");
+                            self.loop_again = false;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    //println!("spin");
                 }
-                _ => {}
             }
         });
     }
@@ -140,7 +154,7 @@ impl EndpointImpl {
     /// Sets the endpoint poll notifier.
     /// This sender can be used to trigger a endpoint poll operation.
     pub fn set_poll_notifier(&mut self, notifer: mpsc::Sender<u8>) {
-        self.endpoint_poll_notifier = Some(notifer)
+        self.endpoint_poll_notifier = Some(notifer);
     }
 
     /// Polls the endpoint.
@@ -149,6 +163,7 @@ impl EndpointImpl {
     /// - Handles all connection sent endpoint events.
     pub fn poll(&mut self) -> Result<bool, QuinnErrorKind> {
         while let Some(transmit) = self.inner.poll_transmit() {
+            // TODO: batch transmits
             self.notify_transmit(transmit);
         }
 
@@ -190,7 +205,9 @@ impl EndpointImpl {
         // if lock is blocked its oke to skip one poll since this function is triggered in various cases.
         if let Some(connection) = self.connection_refs.get(&handle) {
             if let Ok(mut conn) = connection.try_lock() {
-                conn.poll();
+                conn.mark_pollable();
+            } else {
+                println!("Locked endpoint connection lock");
             }
         }
     }
@@ -267,7 +284,6 @@ impl EndpointImpl {
 
                             if let Some(event) = self.inner.handle_event(handle, proto) {
                                 // Ignoring errors from dropped connections that haven't yet been cleaned up
-                                println!("endpoint proto event");
                                 self.connections
                                     .get_mut(&handle)
                                     .unwrap()

@@ -40,10 +40,10 @@ pub use reference::{
 pub use bindings::{
     accept_stream,
     connect_client,
+    create_client_config,
     create_client_endpoint,
+    create_server_config,
     create_server_endpoint,
-    default_client_config,
-    default_server_config,
     handle_datagram,
     last_error,
     open_stream,
