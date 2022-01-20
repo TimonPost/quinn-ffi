@@ -156,6 +156,8 @@ macro_rules! ffi {
             #[allow(unsafe_code, unused_attributes)]
             #[no_mangle]
             pub unsafe extern "cdecl" fn $name( $($arg_ident : $arg_ty),* ) -> FFIResult {
+                tracing::trace!("FFI invoke: {:?}", stringify!($name));
+
                 #[allow(unused_mut)]
                 fn call( $(mut $arg_ident: $arg_ty),* ) -> FFIResult {
                     $(

@@ -103,11 +103,7 @@ ffi! {
     /// * `out_endpoint_handle`: Allocated memory for a pointer that will be initialized with `EndpointHandle`.
     ///
     /// Use the returned `EndpointHandle` for endpoint related FFI functions.
-    fn create_client_endpoint(
-        handle: RustlsClientConfigHandle,
-        endpoint_id: Out<u8>,
-        out_endpoint_handle: Out<EndpointHandle>
-    ) -> FFIResult {
+    fn create_client_endpoint(handle: RustlsClientConfigHandle,endpoint_id: Out<u8>,out_endpoint_handle: Out<EndpointHandle>) -> FFIResult {
         let endpoint_config = Arc::new(EndpointConfig::default());
 
         let mut proto_endpoint = Endpoint::new(endpoint_config, None);
@@ -144,18 +140,9 @@ ffi! {
     /// * `out_connection_id`: Allocated memory for the connection id of the new connection.
     ///
     /// Use the returned `ConnectionHandle` for connection related FFI functions.
-    fn connect_client(
-        handle: EndpointHandle,
-        host_bytes: Ref<u8>,
-        host_bytes_len: u32,
-        address: IpAddr,
-        out_connection: Out<ConnectionHandle>,
-        out_connection_id: Out<u32>
-    ) -> FFIResult {
+    fn connect_client(handle: EndpointHandle,host_bytes: Ref<u8>,host_bytes_len: u32,address: IpAddr,out_connection: Out<ConnectionHandle>,out_connection_id: Out<u32>) -> FFIResult {
         let host_bytes = unsafe {host_bytes.as_bytes(host_bytes_len as usize).to_vec()};
         let host_name = String::from_utf8(host_bytes).expect("Key path not in utf8 format");
-
-        println!("connect host: {:?}", host_name);
 
         handle.mut_access(&mut |endpoint| {
             let mut connection = endpoint.connect(address.into(), &host_name).unwrap();
@@ -342,37 +329,40 @@ ffi! {
     }
 }
 
-enum TlsVersion {
-    Tls2,
-    Tls3,
-}
-// fn create_test_certificate(out_handle: Out<RustlsServerConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
-//
-// }
-
 ffi! {
+    #[cfg(feature="debug")]
+    fn enable_log(log_filter: Ref<u8>, log_filter_length: u32) -> FFIResult {
+        let log_filter_bytes = unsafe { log_filter.as_bytes(log_filter_length as usize) };
+        let log_filter = String::from_utf8(log_filter_bytes.to_vec()).unwrap();
+
+        // possibly let the user
+        tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(&log_filter)
+            .finish(),
+        )
+        .unwrap();
+
+        FFIResult::ok()
+    }
+
     /// Creates and configures a server crypto configuration.
     ///
     /// * `out_handle`: Allocated memory for a pointer to a `RustlsServerConfigHandle`.
-    /// * `cert_path`: A pointer to a utf8 byte buffer storing the path to the certificate.
-    /// * `cert_path_length`: The length of `cert_path`
-    /// * `key_path`: A pointer to a utf8 byte buffer storing the path to the private key.
-    /// * `key_path_length`: The length of `key_path`
+    /// * `cert`: A pointer to a utf8 byte buffer storing the path to the certificate.
+    /// * `cert_lenght`: The length of `cert_path`
+    /// * `key`: A pointer to a utf8 byte buffer storing the path to the private key.
+    /// * `key_lenght`: The length of `key_path`
     ///
     /// * `cert` The certificate must be DER-encoded X.509.
     /// * `key` The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
     ///
-    /// Note that this default config provides only high-quality suites, doesnt support any poor-quality groups, and accepts only TLS 1.2 and TLS 1.3.
-    fn create_server_config(out_handle: Out<RustlsServerConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
-         //TODO: Make it possible to enable trace via feature flag.
-        // tracing::subscriber::set_global_default(
-        // tracing_subscriber::FmtSubscriber::builder()
-        //     .with_env_filter("trace")
-        //     .finish(),
-        // )
-        // .unwrap();
-
-        let (cert, key, store) = unsafe { get_cert_key(&cert_path, cert_path_lenght, &key_path, key_path_lenght) };
+    /// The default configuration contains:
+    /// * only high-quality cipher suites: TLS13_AES_256_GCM_SHA384, TLS13_AES_128_GCM_SHA256, TLS13_CHACHA20_POLY1305_SHA256.
+    /// * only high-quality key exchange groups: curve25519, secp256r1, secp384r1.
+    /// * only TLS 1.2 and 1.3 support.
+    fn create_server_config(out_handle: Out<RustlsServerConfigHandle>, cert: Ref<u8>, cert_lenght: u32, key: Ref<u8>, key_lenght: u32) -> FFIResult {
+        let (cert, key, store) = unsafe { decode_cert_key_store(&cert, cert_lenght, &key, key_lenght) };
 
         let mut crypto = rustls::ServerConfig::builder()
             .with_safe_default_cipher_suites()
@@ -382,8 +372,6 @@ ffi! {
             .with_no_client_auth()
             .with_single_cert(vec![cert], key)
             .expect("bad certificate/key");
-
-        crypto.key_log = Arc::new(KeyLogFile::new());
 
         let config = ServerConfig::with_crypto(Arc::new(crypto));
 
@@ -403,9 +391,12 @@ ffi! {
     /// * `cert` The certificate must be DER-encoded X.509.
     /// * `key` The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
     ///
-    /// Note that this default config provides only high-quality suites, doesnt support any poor-quality groups, and accepts only TLS 1.2 and TLS 1.3.
-    fn create_client_config(out_handle: Out<RustlsClientConfigHandle>, cert_path: Ref<u8>, cert_path_lenght: u32, key_path: Ref<u8>, key_path_lenght: u32) -> FFIResult {
-        let (cert, key, store) = unsafe { get_cert_key(&cert_path, cert_path_lenght, &key_path, key_path_lenght) };
+    /// The default configuration contains:
+    /// * only high-quality cipher suites: TLS13_AES_256_GCM_SHA384, TLS13_AES_128_GCM_SHA256, TLS13_CHACHA20_POLY1305_SHA256.
+    /// * only high-quality key exchange groups: curve25519, secp256r1, secp384r1.
+    /// * only TLS 1.2 and 1.3 support.
+    fn create_client_config(out_handle: Out<RustlsClientConfigHandle>, cert: Ref<u8>, cert_lenght: u32, key: Ref<u8>, key_lenght: u32) -> FFIResult {
+        let (cert, key, store) = unsafe { decode_cert_key_store(&cert, cert_lenght, &key, key_lenght) };
 
         let mut crypto = rustls::ClientConfig::builder()
             .with_safe_default_cipher_suites()
@@ -415,8 +406,6 @@ ffi! {
             .with_root_certificates(store)
             .with_single_cert(vec![cert], key)
             .expect("bad certificate/key");
-
-        crypto.key_log = Arc::new(KeyLogFile::new());
 
         let config = ClientConfig::new(Arc::new(crypto));
 
@@ -428,22 +417,16 @@ ffi! {
     }
 }
 
-unsafe fn get_cert_key(
-    cert_path: &Ref<u8>,
-    cert_path_length: u32,
-    key_path: &Ref<u8>,
-    key_path_lenght: u32,
+unsafe fn decode_cert_key_store(
+    cert: &Ref<u8>,
+    cert_length: u32,
+    key: &Ref<u8>,
+    key_length: u32,
 ) -> (Certificate, PrivateKey, RootCertStore) {
-    let cert_path_bytes = cert_path.as_bytes(cert_path_length as usize).to_vec();
-    let cert_path = String::from_utf8(cert_path_bytes).expect("Key path not in utf8 format");
-
-    let key_path_bytes = key_path.as_bytes(key_path_lenght as usize).to_vec();
-    let key_path = String::from_utf8(key_path_bytes).expect("Key path not in utf8 format");
-
-    let cert = fs::read(cert_path).expect("cert path not existing");
-    let key = fs::read(key_path).expect("key path not existing");
-
-    let (key, cert) = (PrivateKey(key), Certificate(cert));
+    let (key, cert) = (
+        PrivateKey(Vec::from(key.as_bytes(key_length as usize))),
+        Certificate(Vec::from(cert.as_bytes(cert_length as usize))),
+    );
     let mut store = RootCertStore::empty();
     store.add(&cert).unwrap();
 
@@ -547,6 +530,11 @@ pub mod callbacks {
     };
     use libc::size_t;
     use quinn_proto::VarInt;
+    use tracing::{
+        error,
+        trace,
+        warn,
+    };
 
     /// Generates FFI methods to set callbacks and declares the static variable to store that callback.
     #[doc(hidden)]
@@ -563,6 +551,7 @@ pub mod callbacks {
                  pub extern "cdecl" fn $name (callback: extern "C" fn($($arg_ty),*)) -> FFIResult {
                     unsafe {
                         $body = Some(callback);
+                        trace!("Callback {} successfully set.", stringify!($name));
                     }
                     FFIResult::ok()
                 }
@@ -578,6 +567,7 @@ pub mod callbacks {
                 /// Invoke the callback.
                 pub(crate) fn $fn_name($($arg_ident: $arg_ty),*) {
                     unsafe {
+                       trace!("Callback Invoke: {} ({})", stringify!($name), stringify!(($($arg_ident),*)));
                        $name.unwrap_unchecked()($($arg_ident),*);
                     }
                 }
