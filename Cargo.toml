@@ -8,17 +8,20 @@ name="quinn_ffi"
 crate-type = ["cdylib","staticlib"]
 
 [dependencies]
-quinn-proto = {path="../../quinn/quinn-proto", version="0.8.0", features=["rustls"]}
+quinn-proto = {version="0.8.0", features=["rustls"]}
 libc = "0.2.112"
 rustls = { version = "0.20", default-features = false, features = ["quic", "dangerous_configuration"]}
 bytes="1.1.0"
 
-tracing = {optional=true, version = "0.1.29"}
+tracing = {version = "0.1.29"}
 tracing-subscriber = {version="0.3.5", optional = true, features=["env-filter"]}
+
+[dev-dependencies]
+tempdir = "0.3"
 
 [features]
 default = ["safe-api", "auto-poll"]
 safe-api = []
 unsafe-api = []
 auto-poll = []
-debug = ["tracing", "tracing-subscriber"]
+debug = ["tracing-subscriber"]

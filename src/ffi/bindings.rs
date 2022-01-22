@@ -330,12 +330,15 @@ ffi! {
 }
 
 ffi! {
+    /// Enables a global logger with the given log filter.
+    /// This function may be called only once.
     #[cfg(feature="debug")]
     fn enable_log(log_filter: Ref<u8>, log_filter_length: u32) -> FFIResult {
         let log_filter_bytes = unsafe { log_filter.as_bytes(log_filter_length as usize) };
         let log_filter = String::from_utf8(log_filter_bytes.to_vec()).unwrap();
 
-        // possibly let the user
+        // TODO: possibly let the user define the subscriber.
+        // TODO: possibly use `set_default` and return a handle containing the log guard.
         tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(&log_filter)
