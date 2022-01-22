@@ -15,8 +15,8 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-              artifact_name: quinn-ffi.dll
-              asset_name: quinn-ffi-windows-x86_64
+            artifact_name: quinn-ffi.dll
+            asset_name: quinn-ffi-windows-x86_64
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
