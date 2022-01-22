@@ -17,8 +17,12 @@ jobs:
           - os: windows-latest
             artifact_name: quinn-ffi.dll
             asset_name: quinn-ffi-windows-x86_64
-          rust: [stable, nightly]
+        rust: [nightly]
     steps:
+      - name: Set rust version 
+        uses: hecrj/setup-rust-action@v1
+        with:
+           rust-version: ${{ matrix.rust }}
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Build project
