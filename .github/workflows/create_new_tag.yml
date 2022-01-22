@@ -1,0 +1,26 @@
+name: Bump version, create new tag and release point
+on:
+  push:
+    branches:
+      - main
+jobs:
+  bump_version:
+    name: Bump version, create tag/release point
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: '5'
+      - name: Bump version and push tag/create release point
+        id: bump_version
+        uses: anothrNick/github-tag-action@1.36.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+      - name: Repository dispatch tag created event
+        uses: peter-evans/repository-dispatch@v1
+        with:
+          token: ${{ secrets.RELEASE_SECRET }}
+          event-type: tag-created
+          client-payload: '{"new_version": "${{ steps.bump_version.outputs.new_tag }}"}'

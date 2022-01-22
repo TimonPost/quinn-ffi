@@ -4,13 +4,10 @@ use crate::{
     proto::VarInt,
     proto_impl::{
         endpoint::EndpointEvent,
-        result::QuinnErrorKind,
+        result::FFIErrorKind,
     },
 };
-use quinn_proto::{
-    Dir,
-    StreamEvent,
-};
+use quinn_proto::StreamEvent;
 use std::{
     sync::{
         mpsc,
@@ -34,8 +31,6 @@ pub enum ConnectionEvent {
 pub struct ConnectionImpl {
     pub(crate) inner: proto::Connection,
     pub(crate) connection_handle: proto::ConnectionHandle,
-
-    connected: bool,
     connection_events: mpsc::Receiver<ConnectionEvent>,
     endpoint_events: Sender<(proto::ConnectionHandle, EndpointEvent)>,
     timer_deadline: Option<Instant>,
@@ -53,7 +48,6 @@ impl ConnectionImpl {
     ) -> ConnectionImpl {
         ConnectionImpl {
             inner,
-            connected: false,
             connection_events: recv,
             endpoint_events: endpoint_events_tx,
             connection_handle: handle,
@@ -74,7 +68,7 @@ impl ConnectionImpl {
     /// 5. Handles app events.
     ///
     /// Polling the connection might result in callbacks to the client application.
-    pub fn poll(&mut self) -> Result<(), QuinnErrorKind> {
+    pub fn poll(&mut self) -> Result<(), FFIErrorKind> {
         let _ = self.handle_connection_events();
 
         let mut poll_again = self.handle_timer();
@@ -89,13 +83,15 @@ impl ConnectionImpl {
     /// Connection should be polled when IO operations are performed, and timeout happened.
     ///
     /// This will poll the connection if `auto-poll` feature is enabled, else it will invoke the client application set callback.
-    pub fn mark_pollable(&mut self) {
+    pub fn mark_pollable(&mut self) -> Result<(), FFIErrorKind> {
         if cfg!(feature = "auto-poll") {
-            self.poll();
-            self.endpoint_poll_notifier.send(0);
+            self.poll()?;
+            self.endpoint_poll_notifier.send(0)?;
         } else {
             callbacks::on_connection_pollable(self.connection_id())
         }
+
+        Ok(())
     }
 
     fn handle_timer(&mut self) -> bool {
@@ -120,7 +116,7 @@ impl ConnectionImpl {
         return false;
     }
 
-    fn handle_transmits(&mut self) -> Result<bool, QuinnErrorKind> {
+    fn handle_transmits(&mut self) -> Result<bool, FFIErrorKind> {
         let mut should_notify = false;
         while let Some(t) = self.inner.poll_transmit(Instant::now(), 1) {
             self.endpoint_events
@@ -132,7 +128,7 @@ impl ConnectionImpl {
         return Ok(should_notify);
     }
 
-    fn handle_endpoint_events(&mut self) -> Result<(), QuinnErrorKind> {
+    fn handle_endpoint_events(&mut self) -> Result<(), FFIErrorKind> {
         while let Some(event) = self.inner.poll_endpoint_events() {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Proto(event)))?;
@@ -140,7 +136,7 @@ impl ConnectionImpl {
         }
         Ok(())
     }
-    fn handle_connection_events(&mut self) -> Result<(), QuinnErrorKind> {
+    fn handle_connection_events(&mut self) -> Result<(), FFIErrorKind> {
         let event = self.connection_events.try_recv()?;
 
         match event {
@@ -165,10 +161,7 @@ impl ConnectionImpl {
                 HandshakeDataReady => {
                     // ignore for now
                 }
-                Connected => {
-                    self.connected = true;
-                    callbacks::on_connected(self.connection_id())
-                }
+                Connected => callbacks::on_connected(self.connection_id()),
                 ConnectionLost { reason: _ } => {
                     // TODO: self.terminate(reason);
                     callbacks::on_connection_lost(self.connection_id())

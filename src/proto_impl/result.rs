@@ -23,11 +23,11 @@ use std::{
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! impl_error {
+macro_rules! impl_io_error {
     ($from:path) => {
-        impl From<$from> for QuinnErrorKind {
+        impl From<$from> for FFIErrorKind {
             fn from(error: $from) -> Self {
-                QuinnErrorKind::IoError(io::Error::new(io::ErrorKind::Other, error.to_string()))
+                FFIErrorKind::IoError(io::Error::new(io::ErrorKind::Other, error.to_string()))
             }
         }
     };
@@ -35,9 +35,9 @@ macro_rules! impl_error {
 
 /// An `Error` implementing type that can be returned in a `Result`.
 #[derive(Debug)]
-pub enum QuinnErrorKind {
+pub enum FFIErrorKind {
     /// A quinn error kind.
-    QuinErrorKind(FFIResultKind),
+    FFIResultKind(FFIResultKind),
     /// A quinn error with error code and reason.
     QuinnError { code: u32, reason: String },
     /// FFI related error.
@@ -46,36 +46,42 @@ pub enum QuinnErrorKind {
     IoError(io::Error),
 }
 
-impl Error for QuinnErrorKind {}
+impl FFIErrorKind {
+    pub fn io_error(str: &str) -> FFIErrorKind {
+        FFIErrorKind::IoError(io::Error::new(io::ErrorKind::Other, str))
+    }
+}
 
-impl fmt::Display for QuinnErrorKind {
+impl Error for FFIErrorKind {}
+
+impl fmt::Display for FFIErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            QuinnErrorKind::QuinnError { code, reason } => {
+            FFIErrorKind::QuinnError { code, reason } => {
                 write!(f, "QuinnError Error; code: {} reason: {}", code, reason)
             }
-            QuinnErrorKind::FFIError => write!(f, "Error occurred in the FFI layer"),
-            QuinnErrorKind::IoError(err) => write!(f, "Io Error Occurred: {}", err.to_string()),
-            QuinnErrorKind::QuinErrorKind(kind) => {
+            FFIErrorKind::FFIError => write!(f, "Error occurred in the FFI layer"),
+            FFIErrorKind::IoError(err) => write!(f, "Io Error Occurred: {}", err.to_string()),
+            FFIErrorKind::FFIResultKind(kind) => {
                 write!(f, "Quinn error kind Occurred: {:?}", kind)
             }
         }
     }
 }
 
-// For now all protocol errors are treated as IO errors
-impl_error!(quinn_proto::ConnectionError);
-impl_error!(quinn_proto::TransportError);
-impl_error!(io::Error);
-impl_error!(TryRecvError);
-impl_error!(RecvError);
-impl_error!(ReadError);
-impl_error!(WriteError);
-impl_error!(ReadableError);
-impl_error!(VarIntBoundsExceeded);
+// For now most protocol errors are treated as IO errors
+impl_io_error!(quinn_proto::ConnectionError);
+impl_io_error!(quinn_proto::TransportError);
+impl_io_error!(io::Error);
+impl_io_error!(TryRecvError);
+impl_io_error!(RecvError);
+impl_io_error!(ReadError);
+impl_io_error!(WriteError);
+impl_io_error!(ReadableError);
+impl_io_error!(VarIntBoundsExceeded);
 
-impl<T> From<SendError<T>> for QuinnErrorKind {
+impl<T> From<SendError<T>> for FFIErrorKind {
     fn from(error: SendError<T>) -> Self {
-        QuinnErrorKind::IoError(io::Error::new(io::ErrorKind::Other, error.to_string()))
+        FFIErrorKind::IoError(io::Error::new(io::ErrorKind::Other, error.to_string()))
     }
 }

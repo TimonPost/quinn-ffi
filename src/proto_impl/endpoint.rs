@@ -10,12 +10,11 @@ use crate::{
 use quinn_proto::Transmit;
 
 use crate::{
-    ffi::Handle,
     proto::{
         ClientConfig,
         ConnectError,
     },
-    proto_impl::QuinnErrorKind,
+    proto_impl::FFIErrorKind,
 };
 use std::{
     collections::HashMap,
@@ -32,14 +31,8 @@ use std::{
     thread,
 };
 
-use crate::{
-    ffi::EndpointHandle,
-    proto::ConnectionHandle,
-};
-use std::sync::{
-    MutexGuard,
-    TryLockError,
-};
+use crate::proto::ConnectionHandle;
+use std::sync::TryLockError;
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
@@ -161,7 +154,7 @@ impl EndpointImpl {
     ///
     /// - Triggers a callback for all outgoing transmits.
     /// - Handles all connection sent endpoint events.
-    pub fn poll(&mut self) -> Result<bool, QuinnErrorKind> {
+    pub fn poll(&mut self) -> Result<bool, FFIErrorKind> {
         while let Some(transmit) = self.inner.poll_transmit() {
             // TODO: batch transmits
             self.notify_transmit(transmit);
@@ -201,15 +194,17 @@ impl EndpointImpl {
     }
 
     /// Polls a connection by the given connection handle.
-    pub fn poll_connection(&self, handle: ConnectionHandle) {
+    pub fn poll_connection(&self, handle: ConnectionHandle) -> Result<(), FFIErrorKind> {
         // if lock is blocked its oke to skip one poll since this function is triggered in various cases.
         if let Some(connection) = self.connection_refs.get(&handle) {
             if let Ok(mut conn) = connection.try_lock() {
-                conn.mark_pollable();
+                conn.mark_pollable()?;
             } else {
-                println!("Locked endpoint connection lock");
+                return Err(FFIErrorKind::io_error("Locked endpoint connection lock"));
             }
         }
+
+        Ok(())
     }
 
     /// Sends a `ConnectionEvent` to a particular connection.
@@ -217,7 +212,7 @@ impl EndpointImpl {
         &mut self,
         handle: proto::ConnectionHandle,
         event: proto::ConnectionEvent,
-    ) -> Result<(), QuinnErrorKind> {
+    ) -> Result<(), FFIErrorKind> {
         self.connections
             .get_mut(&handle)
             .unwrap()
@@ -269,7 +264,7 @@ impl EndpointImpl {
     }
 
     /// Handles events sent by connections which in turn might trigger new events for connections.
-    fn handle_connection_events(&mut self) -> Result<bool, QuinnErrorKind> {
+    fn handle_connection_events(&mut self) -> Result<bool, FFIErrorKind> {
         for _ in 0..IO_LOOP_BOUND {
             match self.endpoint_events_rx.try_recv() {
                 Ok((handle, event)) => {

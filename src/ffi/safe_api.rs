@@ -12,7 +12,7 @@ use crate::{
     proto_impl::{
         ConnectionImpl,
         EndpointImpl,
-        QuinnErrorKind,
+        FFIErrorKind,
     },
 };
 
@@ -35,16 +35,16 @@ impl<'a> Handle for RustlsClientConfigHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
         cb(lock)
     }
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -60,8 +60,8 @@ impl<'a> Handle for EndpointHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -69,8 +69,8 @@ impl<'a> Handle for EndpointHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         //println!(" ++ endpoint lock");
         let mut lock = self.lock().unwrap();
         let a = cb(&mut lock);
@@ -89,8 +89,8 @@ impl<'a> Handle for RustlsServerConfigHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
 
         cb(lock)
@@ -98,8 +98,8 @@ impl<'a> Handle for RustlsServerConfigHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -115,8 +115,8 @@ impl<'a> Handle for ConnectionHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
 
         cb(lock)
@@ -124,8 +124,8 @@ impl<'a> Handle for ConnectionHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         //println!("\t++ connection lock");
         let mut lock = self.lock().unwrap();
         let a = cb(&mut lock);
@@ -149,7 +149,9 @@ The macro doesn't support generics or argument patterns that are more complex th
 
 macro_rules! ffi {
     (
-        $(  $(#[$meta:meta])* fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> FFIResult $body:expr)*
+        $(
+            $(#[$meta:meta])*
+            fn $name:ident ( $( $arg_ident:ident : $arg_ty:ty),* ) -> FFIResult $body:expr)*
     ) => {
         $(
             $(#[$meta])*
@@ -162,7 +164,7 @@ macro_rules! ffi {
                 fn call( $(mut $arg_ident: $arg_ty),* ) -> FFIResult {
                     $(
                         if $crate::ffi::IsNull::is_null(&$arg_ident) {
-                            return FFIResult::argument_null().context(QuinnError::new(0, stringify!($arg_ident).to_string()));
+                            return FFIResult::argument_null().context(FFIErrorKind::io_error(&stringify!($arg_ident)));
                         }
                     )*
 

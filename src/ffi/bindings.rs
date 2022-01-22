@@ -6,7 +6,6 @@ use crate::{
         FFIResultKind,
         Handle,
         Out,
-        QuinnError,
         Ref,
         RustlsClientConfigHandle,
         RustlsServerConfigHandle,
@@ -25,8 +24,8 @@ use crate::{
         ConnectionImpl,
         EndpointImpl,
         EndpointPoller,
+        FFIErrorKind,
         IpAddr,
-        QuinnErrorKind,
     },
 };
 use bytes::BytesMut;
@@ -36,23 +35,14 @@ use quinn_proto::{
     VarIntBoundsExceeded,
 };
 use rustls::{
-    client::{
-        ServerCertVerified,
-        ServerCertVerifier,
-    },
     Certificate,
-    KeyLogFile,
     PrivateKey,
     RootCertStore,
 };
 use std::{
-    fs,
     io::Write,
     net::SocketAddr,
-    sync::{
-        Arc,
-        Mutex,
-    },
+    sync::Arc,
     time::Instant,
 };
 
@@ -83,17 +73,17 @@ ffi! {
         let (poller, poll_notifier) = EndpointPoller::new(endpoint_handle.clone());
         poller.start_polling();
 
-        let mut endpoint_lock = endpoint_handle.mut_access(&mut move |endpoint| {
+        let result = endpoint_handle.mut_access(&mut move |endpoint| {
             endpoint.set_poll_notifier(poll_notifier.clone());
             Ok(())
-        });
+        }).into();
 
         unsafe {
             out_endpoint_id.init(endpoint_id);
             out_endpoint_handle.init(endpoint_handle);
         }
 
-        FFIResult::ok()
+        result
     }
 
     /// Creates a client endpoint with a certain configuration.
@@ -146,7 +136,7 @@ ffi! {
 
         handle.mut_access(&mut |endpoint| {
             let mut connection = endpoint.connect(address.into(), &host_name).unwrap();
-            connection.mark_pollable();
+            connection.mark_pollable()?;
 
             let c_handle = connection.connection_handle;
             let connection_handle = super::ConnectionHandle::new(connection);
@@ -168,7 +158,6 @@ ffi! {
     /// * `length`: The length of the buffer storing the datagram.
     /// * `address`: A type defining a socket address. Make sure to use correct layout.
     fn handle_datagram(handle: EndpointHandle, data: Ref<u8>, length: size_t, address: IpAddr) -> FFIResult {
-
         handle.mut_access(&mut |endpoint| {
             let slice = unsafe { data.as_bytes(length) };
 
@@ -184,20 +173,20 @@ ffi! {
                     let mut connection_handle = super::ConnectionHandle::new(connection);
                     endpoint.register_pollable_connection(handle, connection_handle.clone());
 
-                    endpoint.poll();
+                    endpoint.poll()?;
 
                     connection_handle.mut_access(&mut |lock| {
-                        lock.mark_pollable();
+                        lock.mark_pollable()?;
                         Ok(())
-                    });
+                    })?;
 
                     callbacks::on_new_connection(connection_handle, handle.0 as u32, endpoint.id as u32);
                 }
                 Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                     endpoint.forward_event_to_connection(handle, event)?;
-                    endpoint.poll();
+                    endpoint.poll()?;
 
-                    endpoint.poll_connection(handle);
+                    endpoint.poll_connection(handle)?;
                 }
                 None => {
                     println!("None handled");
@@ -231,7 +220,8 @@ ffi! {
    fn last_error(error_buf: Out<u8>, error_buf_len: size_t, actual_error_buf_len: Out<size_t>) -> FFIResult {
         FFIResult::from_last_result(|last_result| {
             if let Some(error_msg) = last_result {
-                let error_as_bytes = error_msg.reason.as_bytes();
+                let error_msg = error_msg.to_string();
+                let error_as_bytes = error_msg.as_bytes();
 
                 // "The out pointer is valid and not mutably aliased elsewhere"
                 unsafe {
@@ -262,13 +252,13 @@ ffi! {
         let dir = dir_from_u8(stream_direction);
         handle.mut_access(&mut |connection| {
            let result = if let Some(stream_id) = connection.inner.streams().accept(dir) {
-                connection.mark_pollable();
+                connection.mark_pollable()?;
                 unsafe {
                     stream_id_out.init(VarInt::from(stream_id).into());
                 }
                 Ok(())
             } else {
-                Err(QuinnErrorKind::QuinnError {code: 0, reason: "No stream to accept!".to_string()})
+                Err(FFIErrorKind::io_error("No stream to accept!"))
             };
 
             result
@@ -323,19 +313,22 @@ ffi! {
                 unsafe { opened_stream_id.init(_stream_id_to_u64(stream_id)) }
                 Ok(())
             } else {
-                Err(QuinnErrorKind::QuinnError {code: 0, reason: "Streams in the given direction are currently exhausted".to_string()})
+                Err(FFIErrorKind::io_error("Streams in the given direction are currently exhausted"))
             }
         }).into()
     }
 }
 
 ffi! {
+    /// Enables a global logger with the given log filter.
+    /// This function may be called only once.
     #[cfg(feature="debug")]
     fn enable_log(log_filter: Ref<u8>, log_filter_length: u32) -> FFIResult {
         let log_filter_bytes = unsafe { log_filter.as_bytes(log_filter_length as usize) };
         let log_filter = String::from_utf8(log_filter_bytes.to_vec()).unwrap();
 
-        // possibly let the user
+        // TODO: possibly let the user define the subscriber.
+        // TODO: possibly use `set_default` and return a handle containing the log guard.
         tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(&log_filter)
@@ -362,7 +355,7 @@ ffi! {
     /// * only high-quality key exchange groups: curve25519, secp256r1, secp384r1.
     /// * only TLS 1.2 and 1.3 support.
     fn create_server_config(out_handle: Out<RustlsServerConfigHandle>, cert: Ref<u8>, cert_lenght: u32, key: Ref<u8>, key_lenght: u32) -> FFIResult {
-        let (cert, key, store) = unsafe { decode_cert_key_store(&cert, cert_lenght, &key, key_lenght) };
+        let (cert, key, _store) = unsafe { decode_cert_key_store(&cert, cert_lenght, &key, key_lenght) };
 
         let mut crypto = rustls::ServerConfig::builder()
             .with_safe_default_cipher_suites()
@@ -439,14 +432,14 @@ fn _read_stream(
     message_buf: &mut Out<u8>,
     message_buf_len: size_t,
     actual_message_len: &mut Out<size_t>,
-) -> Result<(), QuinnErrorKind> {
+) -> Result<(), FFIErrorKind> {
     let mut stream = handle.inner.recv_stream(_stream_id(stream_id)?);
 
     let mut result = stream.read(true)?;
 
     match result.next(message_buf_len) {
         Ok(Some(chunk)) => unsafe {
-            let mut buffer = unsafe { message_buf.as_uninit_bytes_mut(message_buf_len) };
+            let mut buffer = message_buf.as_uninit_bytes_mut(message_buf_len);
 
             let written = buffer.write(&chunk.bytes)?;
 
@@ -454,10 +447,11 @@ fn _read_stream(
         },
         Err(e) => {
             if result.finalize().should_transmit() {
-                handle.mark_pollable();
+                handle.mark_pollable()?;
             }
+
             if e == ReadError::Blocked {
-                return Err(QuinnErrorKind::QuinErrorKind(FFIResultKind::BufferBlocked));
+                return Err(FFIErrorKind::FFIResultKind(FFIResultKind::BufferBlocked));
             }
 
             return Err(e.into());
@@ -466,10 +460,8 @@ fn _read_stream(
     }
 
     if result.finalize().should_transmit() {
-        //handle.mark_pollable();
+        handle.mark_pollable()?;
     }
-
-    handle.mark_pollable();
 
     Ok(())
 }
@@ -480,7 +472,7 @@ fn _write_stream(
     buffer: &mut Ref<u8>,
     buf_len: size_t,
     written_bytes: &mut Out<size_t>,
-) -> Result<(), QuinnErrorKind> {
+) -> Result<(), FFIErrorKind> {
     let mut stream = handle.inner.send_stream(_stream_id(stream_id)?);
 
     let bytes = unsafe { buffer.as_bytes(buf_len) };
@@ -489,7 +481,7 @@ fn _write_stream(
         written_bytes.init(result);
     }
 
-    handle.mark_pollable();
+    handle.mark_pollable()?;
 
     Ok(())
 }
@@ -516,25 +508,16 @@ pub mod callbacks {
         ffi::{
             ConnectionHandle,
             FFIResult,
-            Handle,
         },
         proto::{
-            Dir,
             StreamId,
             Transmit,
         },
-        proto_impl::{
-            ConnectionImpl,
-            IpAddr,
-        },
+        proto_impl::IpAddr,
     };
     use libc::size_t;
     use quinn_proto::VarInt;
-    use tracing::{
-        error,
-        trace,
-        warn,
-    };
+    use tracing::trace;
 
     /// Generates FFI methods to set callbacks and declares the static variable to store that callback.
     #[doc(hidden)]

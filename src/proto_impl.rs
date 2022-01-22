@@ -10,7 +10,7 @@ pub use endpoint::{
     EndpointImpl,
     EndpointPoller,
 };
-pub use result::QuinnErrorKind;
+pub use result::FFIErrorKind;
 
 mod addr;
 mod connection;

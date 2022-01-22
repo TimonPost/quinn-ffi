@@ -1,4 +1,4 @@
-use crate::proto_impl::QuinnErrorKind;
+use crate::proto_impl::FFIErrorKind;
 
 use std::{
     any::Any,
@@ -9,6 +9,7 @@ use std::{
         Display,
         Formatter,
     },
+    io,
     panic::{
         catch_unwind,
         UnwindSafe,
@@ -22,7 +23,7 @@ thread_local!(
 /// The last `QuinnError`.
 #[derive(Debug)]
 pub struct LastResult {
-    err: Option<QuinnError>,
+    err: Option<FFIErrorKind>,
 }
 
 /// FFI safe result type.
@@ -65,7 +66,7 @@ impl FFIResult {
     }
 
     /// Sets the `LAST_RESULT` context to the given `QuinnError`.
-    pub fn context(self, e: QuinnError) -> Self {
+    pub fn context(self, e: FFIErrorKind) -> Self {
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
             *last_result.borrow_mut() = Some(result);
@@ -75,11 +76,11 @@ impl FFIResult {
     }
 
     /// Creates result from `LAST_RESULT`.
-    pub fn from_last_result<R>(f: impl FnOnce(Option<&QuinnError>) -> R) -> R {
+    pub fn from_last_result<R>(f: impl FnOnce(Option<&FFIErrorKind>) -> R) -> R {
         LAST_RESULT.with(|last_result| {
             let last_result = last_result.borrow();
 
-            let mut message: Option<&QuinnError> = None;
+            let mut message: Option<&FFIErrorKind> = None;
 
             if let Some(last) = last_result.as_ref() {
                 if let Some(error) = last.err.as_ref() {
@@ -100,7 +101,10 @@ impl FFIResult {
             return match catch_unwind(f) {
                 Ok(result) => {
                     if result.is_err() {
-                        let error = QuinnError::new(0, result.to_string());
+                        let error = FFIErrorKind::IoError(io::Error::new(
+                            io::ErrorKind::Other,
+                            result.to_string(),
+                        ));
 
                         // Always set the last result so it matches what's returned.
                         // This `Ok` branch doesn't necessarily mean the result is ok,
@@ -126,7 +130,7 @@ impl FFIResult {
 
                     ref_mut.as_mut().map(|a| {
                         *a = LastResult {
-                            err: Some(QuinnError::new(0, extract_panic().unwrap())),
+                            err: Some(FFIErrorKind::io_error(&extract_panic().unwrap())),
                         };
                     });
 
@@ -162,19 +166,19 @@ impl Display for FFIResult {
     }
 }
 
-impl<T> From<Result<T, QuinnErrorKind>> for FFIResult {
-    fn from(result: Result<T, QuinnErrorKind>) -> Self {
+impl<T> From<Result<T, FFIErrorKind>> for FFIResult {
+    fn from(result: Result<T, FFIErrorKind>) -> Self {
         match result {
             Ok(_kind) => FFIResult::ok(),
             Err(e) => match e {
-                QuinnErrorKind::QuinErrorKind(kind) => match kind {
+                FFIErrorKind::FFIResultKind(kind) => match kind {
                     FFIResultKind::Ok => FFIResult::ok(),
                     FFIResultKind::Error => FFIResult::err(),
                     FFIResultKind::BufferToSmall => FFIResult::buffer_too_small(),
                     FFIResultKind::BufferBlocked => FFIResult::buffer_blocked(),
                     FFIResultKind::ArgumentNull => FFIResult::argument_null(),
                 },
-                e => FFIResult::err().context(QuinnError::new(0, e.to_string())),
+                e => FFIResult::err().context(e),
             },
         }
     }
@@ -182,7 +186,7 @@ impl<T> From<Result<T, QuinnErrorKind>> for FFIResult {
 
 impl From<&str> for FFIResult {
     fn from(result: &str) -> Self {
-        FFIResult::err().context(QuinnError::new(0, result.to_string()))
+        FFIResult::err().context(FFIErrorKind::io_error(result))
     }
 }
 

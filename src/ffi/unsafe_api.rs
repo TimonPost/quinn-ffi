@@ -8,7 +8,7 @@ use crate::{
     proto_impl::{
         ConnectionImpl,
         EndpointImpl,
-        QuinnErrorKind,
+        FFIErrorKind,
     },
 };
 
@@ -32,16 +32,16 @@ impl<'a> Handle for RustlsClientConfigHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
         cb(lock)
     }
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -57,8 +57,8 @@ impl<'a> Handle for EndpointHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -66,8 +66,8 @@ impl<'a> Handle for EndpointHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -83,8 +83,8 @@ impl<'a> Handle for RustlsServerConfigHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
 
         cb(lock)
@@ -92,8 +92,8 @@ impl<'a> Handle for RustlsServerConfigHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         cb(&mut lock)
@@ -109,8 +109,8 @@ impl<'a> Handle for ConnectionHandle<'a> {
 
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let lock = &self.lock().unwrap();
 
         cb(lock)
@@ -118,8 +118,8 @@ impl<'a> Handle for ConnectionHandle<'a> {
 
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind> {
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind> {
         let mut lock = self.lock().unwrap();
 
         let a = cb(&mut lock);

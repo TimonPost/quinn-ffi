@@ -19,7 +19,6 @@ mod handle_sync;
 mod null;
 mod out;
 mod reference;
-mod transport_config;
 
 pub use handle_shared::HandleShared;
 pub use handle_sync::HandleSync;
@@ -54,7 +53,7 @@ pub use bindings::{
 
 pub use bindings::callbacks;
 
-use crate::proto_impl::QuinnErrorKind;
+use crate::proto_impl::FFIErrorKind;
 
 /// A handle defines a type that is shared across the FFi boundary.
 pub trait Handle {
@@ -66,12 +65,12 @@ pub trait Handle {
     /// Access the immutable inner handle value.
     fn ref_access(
         &self,
-        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind>;
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind>;
 
     /// Access the mutable inner handle value.
     fn mut_access(
         &mut self,
-        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), QuinnErrorKind>,
-    ) -> Result<(), QuinnErrorKind>;
+        cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind>;
 }

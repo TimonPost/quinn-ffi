@@ -1,0 +1,66 @@
+name: Build and upload binaries to release
+
+on:
+  repository_dispatch:
+    types: [tag-created]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        rust: [nightly]
+        include:
+          - os: ubuntu-latest
+            asset_name: quinn-ffi
+            post_fix: lib
+            extension: .so
+            release: target/release/
+          - os: windows-latest
+            asset_name: quinn-ffi
+            extension: .dll
+            release: target/release/
+    steps:
+      - name: Set rust version
+        uses: hecrj/setup-rust-action@v1
+        with:
+          rust-version: ${{ matrix.rust }}
+
+      - name: Set Toolchain ENV
+        shell: bash
+        run: echo "TOOL_CHAIN=$(rustup default)" >> $GITHUB_ENV
+
+      - name: Trim Toolchain String
+        shell: bash
+        run:  echo "TOOL_CHAIN=${{env.TOOL_CHAIN}}" | sed -e "s/ (default)//g" >> $GITHUB_ENV
+
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Build Project
+        run: cargo build --release --locked
+
+      - name: Set Output Library ENV
+        shell: bash
+        run: echo "OUTPUT_LIB=target/release/quinn_ffi-${{env.TOOL_CHAIN}}${{matrix.extension}}" >> $GITHUB_ENV
+
+      - if: matrix.os == 'ubuntu-latest'
+        name: Remove lib postfix binary file
+        run: mv target/release/${{matrix.post_fix}}quinn_ffi${{matrix.extension}} ${{env.OUTPUT_LIB}}
+      - if: matrix.os == 'windows-latest'
+        name: Remove lib postfix binary file
+        run: mv target/release/quinn_ffi${{matrix.extension}} ${{env.OUTPUT_LIB}}
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v0.1.14
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{env.OUTPUT_LIB}}
+          name: ${{ matrix.asset_name }} (${{ github.event.client_payload.new_version }})
+          tag_name: ${{ github.event.client_payload.new_version }}
+          body: "Download the binary that matches your toolchain and platform."
