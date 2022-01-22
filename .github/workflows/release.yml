@@ -17,12 +17,6 @@ jobs:
           - os: windows-latest
               artifact_name: quinn-ffi.dll
               asset_name: quinn-ffi-windows-x86_64
-#          - os: ubuntu-latest
-#            artifact_name: leis-municipais
-#            asset_name: leis-municipais-linux-amd64
-#          - os: macos-latest
-#            artifact_name: leis-municipais
-#            asset_name: leis-municipais-macos-amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
