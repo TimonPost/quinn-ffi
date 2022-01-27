@@ -1,10 +1,7 @@
 //! This module doesnt validate if pointers are null, and does not catch panics.
 //! Its unsafe but might be faster since there is less overhead for FFI calls.
 use crate::{
-    ffi::{
-        Handle,
-        HandleSync,
-    },
+    ffi::HandleMut,
     proto_impl::{
         ConnectionImpl,
         EndpointImpl,
@@ -12,22 +9,22 @@ use crate::{
     },
 };
 
-use crate::ffi::HandleShared;
+use crate::ffi::HandleRef;
 use std::sync::{
     Arc,
     Mutex,
 };
 
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type RustlsClientConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::ClientConfig>>;
+pub type RustlsClientConfigHandle<'a> = HandleMut<'a, Mutex<quinn_proto::ClientConfig>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type RustlsServerConfigHandle<'a> = HandleSync<'a, Mutex<quinn_proto::ServerConfig>>;
+pub type RustlsServerConfigHandle<'a> = HandleMut<'a, Mutex<quinn_proto::ServerConfig>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type EndpointHandle<'a> = HandleSync<'a, Arc<Mutex<EndpointImpl>>>;
+pub type EndpointHandle<'a> = HandleMut<'a, Arc<Mutex<EndpointImpl>>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type ConnectionHandle<'a> = HandleSync<'a, Arc<Mutex<ConnectionImpl>>>;
+pub type ConnectionHandle<'a> = HandleMut<'a, Arc<Mutex<ConnectionImpl>>>;
 
-impl<'a> Handle for RustlsClientConfigHandle<'a> {
+impl<'a> HandleMut for RustlsClientConfigHandle<'a> {
     type Inner = quinn_proto::ClientConfig;
 
     fn ref_access(
@@ -52,7 +49,7 @@ impl<'a> Handle for RustlsClientConfigHandle<'a> {
     }
 }
 
-impl<'a> Handle for EndpointHandle<'a> {
+impl<'a> HandleMut for EndpointHandle<'a> {
     type Inner = EndpointImpl;
 
     fn ref_access(
@@ -78,7 +75,7 @@ impl<'a> Handle for EndpointHandle<'a> {
     }
 }
 
-impl<'a> Handle for RustlsServerConfigHandle<'a> {
+impl<'a> HandleMut for RustlsServerConfigHandle<'a> {
     type Inner = quinn_proto::ServerConfig;
 
     fn ref_access(
@@ -104,7 +101,7 @@ impl<'a> Handle for RustlsServerConfigHandle<'a> {
     }
 }
 
-impl<'a> Handle for ConnectionHandle<'a> {
+impl<'a> HandleMut for ConnectionHandle<'a> {
     type Inner = ConnectionImpl;
 
     fn ref_access(

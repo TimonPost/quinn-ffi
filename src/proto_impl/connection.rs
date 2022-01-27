@@ -7,6 +7,7 @@ use crate::{
         result::FFIErrorKind,
     },
 };
+use bytes::Bytes;
 use quinn_proto::StreamEvent;
 use std::{
     sync::{
@@ -35,7 +36,7 @@ pub struct ConnectionImpl {
     endpoint_events: Sender<(proto::ConnectionHandle, EndpointEvent)>,
     timer_deadline: Option<Instant>,
     last_poll: Instant,
-    endpoint_poll_notifier: Sender<u8>,
+    endpoint_poll_notifier: Option<Sender<i8>>,
 }
 
 impl ConnectionImpl {
@@ -44,7 +45,7 @@ impl ConnectionImpl {
         handle: proto::ConnectionHandle,
         recv: mpsc::Receiver<ConnectionEvent>,
         endpoint_events_tx: Sender<(proto::ConnectionHandle, EndpointEvent)>,
-        endpoint_poll_notifier: Sender<u8>,
+        endpoint_poll_notifier: Option<Sender<i8>>,
     ) -> ConnectionImpl {
         ConnectionImpl {
             inner,
@@ -86,12 +87,18 @@ impl ConnectionImpl {
     pub fn mark_pollable(&mut self) -> Result<(), FFIErrorKind> {
         if cfg!(feature = "auto-poll") {
             self.poll()?;
-            self.endpoint_poll_notifier.send(0)?;
+            // is initialized when auto-poll is enabled.
+            self.endpoint_poll_notifier.as_ref().unwrap().send(0)?;
         } else {
             callbacks::on_connection_pollable(self.connection_id())
         }
 
         Ok(())
+    }
+
+    pub fn close(&mut self, error_code: VarInt, reason: &[u8]) {
+        self.inner
+            .close(Instant::now(), error_code, Bytes::copy_from_slice(reason));
     }
 
     fn handle_timer(&mut self) -> bool {
@@ -132,7 +139,10 @@ impl ConnectionImpl {
         while let Some(event) = self.inner.poll_endpoint_events() {
             self.endpoint_events
                 .send((self.connection_handle, EndpointEvent::Proto(event)))?;
-            self.endpoint_poll_notifier.send(0)?;
+
+            if cfg!(feature = "auto-poll") {
+                self.endpoint_poll_notifier.as_ref().unwrap().send(0)?;
+            }
         }
         Ok(())
     }
@@ -140,9 +150,12 @@ impl ConnectionImpl {
         let event = self.connection_events.try_recv()?;
 
         match event {
-            ConnectionEvent::Close { .. } => {
-                // TODO: terminate connection
-            }
+            ConnectionEvent::Close { error_code, reason } => callbacks::on_connection_close(
+                self.connection_id(),
+                error_code.into_inner(),
+                reason.as_ptr(),
+                reason.len() as u32,
+            ),
             ConnectionEvent::Proto(proto) => {
                 self.inner.handle_event(proto);
             }

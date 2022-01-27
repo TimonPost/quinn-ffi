@@ -8,21 +8,17 @@ use std::{
     },
 };
 
-/// A shared handle that can be read-accessed concurrently by multiple threads.
+/// A handle that can be read-accessed concurrently by multiple threads.
 ///
 /// The interior value can be treated like `&T`.
 #[repr(transparent)]
-pub struct HandleShared<'a, T: ?Sized>(*const T, PhantomData<&'a T>);
+pub struct FFIHandleRef<'a, T>(*const T, PhantomData<&'a T>)
+where
+    T: ?Sized + Send + Sync;
 
-// The handle is semantically `&T`
-unsafe impl<'a, T> Send for HandleShared<'a, T> where T: ?Sized + Send {}
+impl<'a, T> UnwindSafe for FFIHandleRef<'a, T> where T: ?Sized + RefUnwindSafe + Send + Sync {}
 
-// The handle is semantically `&T`
-unsafe impl<'a, T> Sync for HandleShared<'a, T> where T: ?Sized + Sync {}
-
-impl<'a, T> UnwindSafe for HandleShared<'a, T> where T: ?Sized + RefUnwindSafe {}
-
-impl<'a, T> HandleShared<'a, T>
+impl<'a, T> FFIHandleRef<'a, T>
 where
     T: Send + Sync,
 {
@@ -33,11 +29,11 @@ where
     {
         let v = Box::new(value);
 
-        HandleShared(Box::into_raw(v), PhantomData)
+        FFIHandleRef(Box::into_raw(v), PhantomData)
     }
 }
 
-impl<'a, T> HandleShared<'a, T>
+impl<'a, T> FFIHandleRef<'a, T>
 where
     T: Send + Sync,
 {
@@ -50,9 +46,9 @@ where
     }
 }
 
-impl<'a, T> Deref for HandleShared<'a, T>
+impl<'a, T> Deref for FFIHandleRef<'a, T>
 where
-    T: ?Sized,
+    T: ?Sized + Send + Sync,
 {
     type Target = T;
 
@@ -62,7 +58,10 @@ where
     }
 }
 
-impl<'a, T: ?Sized + Sync> IsNull for HandleShared<'a, T> {
+impl<'a, T> IsNull for FFIHandleRef<'a, T>
+where
+    T: ?Sized + Send + Sync,
+{
     fn is_null(&self) -> bool {
         self.0.is_null()
     }

@@ -14,14 +14,12 @@ pub use unsafe_api::*;
 
 mod bindings;
 mod ffi_result;
+mod handle_mut;
 mod handle_shared;
-mod handle_sync;
 mod null;
 mod out;
 mod reference;
 
-pub use handle_shared::HandleShared;
-pub use handle_sync::HandleSync;
 pub use null::IsNull;
 pub use out::Out;
 
@@ -56,7 +54,7 @@ pub use bindings::callbacks;
 use crate::proto_impl::FFIErrorKind;
 
 /// A handle defines a type that is shared across the FFi boundary.
-pub trait Handle {
+pub trait HandleMut {
     type Inner;
 
     /// Returns a new allocated instance of the handle.
@@ -72,5 +70,19 @@ pub trait Handle {
     fn mut_access(
         &mut self,
         cb: &mut dyn FnMut(&mut Self::Inner) -> Result<(), FFIErrorKind>,
+    ) -> Result<(), FFIErrorKind>;
+}
+
+/// A handle defines a type that is shared across the FFi boundary.
+pub trait HandleRef {
+    type Inner;
+
+    /// Returns a new allocated instance of the handle.
+    fn new(instance: Self::Inner) -> Self;
+
+    /// Access the immutable inner handle value.
+    fn ref_access(
+        &self,
+        cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
     ) -> Result<(), FFIErrorKind>;
 }

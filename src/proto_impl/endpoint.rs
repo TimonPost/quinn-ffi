@@ -55,14 +55,14 @@ pub enum EndpointEvent {
 /// Polls the endpoint when notified to do so.
 /// This polling happens on its own thread.
 pub struct EndpointPoller {
-    receiver: mpsc::Receiver<u8>,
+    receiver: mpsc::Receiver<i8>,
     loop_again: bool,
     endpoint_ref: Arc<Mutex<EndpointImpl>>,
 }
 
 impl EndpointPoller {
     /// Creates a new `EndpointPoller`.
-    pub fn new(endpoint_ref: Arc<Mutex<EndpointImpl>>) -> (Self, mpsc::Sender<u8>) {
+    pub fn new(endpoint_ref: Arc<Mutex<EndpointImpl>>) -> (Self, mpsc::Sender<i8>) {
         let (sender, receiver) = mpsc::channel();
         (
             EndpointPoller {
@@ -81,7 +81,12 @@ impl EndpointPoller {
             let mut spin_counter = 0;
             loop {
                 if !self.loop_again {
-                    let _ = self.receiver.recv();
+                    let code = self.receiver.recv();
+
+                    if Ok(-1) == code {
+                        // exit this poll operation, endpoint sent exit code.
+                        return;
+                    }
                 }
 
                 if self.loop_again {
@@ -103,8 +108,6 @@ impl EndpointPoller {
                         }
                         _ => {}
                     }
-                } else {
-                    //println!("spin");
                 }
             }
         });
@@ -118,11 +121,12 @@ pub struct EndpointImpl {
     pub(crate) inner: proto::Endpoint,
     endpoint_events_rx: mpsc::Receiver<(proto::ConnectionHandle, EndpointEvent)>,
     endpoint_events_tx: mpsc::Sender<(proto::ConnectionHandle, EndpointEvent)>,
-    endpoint_poll_notifier: Option<mpsc::Sender<u8>>,
+    endpoint_poll_notifier: Option<mpsc::Sender<i8>>,
     default_client_config: Option<ClientConfig>,
     connections: HashMap<proto::ConnectionHandle, mpsc::Sender<ConnectionEvent>>,
     // use the refs strictly for polling operations only.
     // Locking a connection could result in deadlocks if the application is already using the lock.
+    // TODO: remove this, currently required in handle_datagram
     connection_refs: HashMap<proto::ConnectionHandle, Arc<Mutex<ConnectionImpl>>>,
 }
 
@@ -146,7 +150,7 @@ impl EndpointImpl {
 
     /// Sets the endpoint poll notifier.
     /// This sender can be used to trigger a endpoint poll operation.
-    pub fn set_poll_notifier(&mut self, notifer: mpsc::Sender<u8>) {
+    pub fn set_poll_notifier(&mut self, notifer: mpsc::Sender<i8>) {
         self.endpoint_poll_notifier = Some(notifer);
     }
 
@@ -179,8 +183,14 @@ impl EndpointImpl {
             handle,
             recv,
             self.endpoint_events_tx.clone(),
-            self.endpoint_poll_notifier.clone().unwrap(),
+            self.endpoint_poll_notifier.clone(),
         )
+    }
+
+    /// Removes, not closing, the connection from the endpoint.
+    pub fn remove_connection(&mut self, handle: proto::ConnectionHandle) {
+        self.connection_refs.remove(&handle);
+        self.connections.remove(&handle);
     }
 
     /// Registers a connection for polling.
@@ -261,6 +271,15 @@ impl EndpointImpl {
         let (ch, conn) = self.inner.connect(config, addr, server_name)?;
 
         Ok(self.add_connection(ch, conn))
+    }
+
+    pub fn close(&mut self) {
+        self.endpoint_poll_notifier.as_ref().map(|val| {
+            val.send(-1);
+        });
+
+        self.connections.clear();
+        self.connection_refs.clear();
     }
 
     /// Handles events sent by connections which in turn might trigger new events for connections.

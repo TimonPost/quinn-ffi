@@ -11,29 +11,23 @@ use std::{
     },
 };
 
-/// A shared handle that can be read/write-accessed concurrently by multiple threads.
+/// A handle that can be read/write-accessed concurrently by multiple threads.
 ///
 /// Can only contain types that are `Sync` + `Send` semantically.
 #[repr(transparent)]
-pub struct HandleSync<'a, T>(*mut T, PhantomData<&'a T>)
+pub struct FFIHandleMut<'a, T>(*mut T, PhantomData<&'a T>)
 where
     T: ?Sized + Send + Sync;
 
-impl<'a, T> UnwindSafe for HandleSync<'a, T> where T: ?Sized + Send + Sync + RefUnwindSafe {}
+impl<'a, T> UnwindSafe for FFIHandleMut<'a, T> where T: ?Sized + Send + Sync + RefUnwindSafe {}
 
-// The handle is semantically `&T`
-unsafe impl<'a, T> Send for HandleSync<'a, T> where T: ?Sized + Send + Sync {}
-
-// The handle is semantically `&T`
-unsafe impl<'a, T> Sync for HandleSync<'a, T> where T: ?Sized + Send + Sync {}
-
-impl<'a, T> HandleSync<'a, T>
+impl<'a, T> FFIHandleMut<'a, T>
 where
     T: Send + Sync,
 {
     /// Allocates and initializes memory for the passed type.
     pub fn alloc(value: T) -> Self {
-        HandleSync(Box::into_raw(Box::new(value)), PhantomData)
+        FFIHandleMut(Box::into_raw(Box::new(value)), PhantomData)
     }
 
     /// Deallocates and initializes memory for the passed type.
@@ -45,7 +39,7 @@ where
     }
 }
 
-impl<'a, T> Deref for HandleSync<'a, T>
+impl<'a, T> Deref for FFIHandleMut<'a, T>
 where
     T: ?Sized + Send + Sync,
 {
@@ -57,7 +51,7 @@ where
     }
 }
 
-impl<'a, T> DerefMut for HandleSync<'a, T>
+impl<'a, T> DerefMut for FFIHandleMut<'a, T>
 where
     T: ?Sized + Send + Sync,
 {
@@ -67,7 +61,7 @@ where
     }
 }
 
-impl<'a, T> IsNull for HandleSync<'a, T>
+impl<'a, T> IsNull for FFIHandleMut<'a, T>
 where
     T: ?Sized + Send + Sync,
 {

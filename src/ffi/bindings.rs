@@ -4,7 +4,7 @@ use crate::{
         EndpointHandle,
         FFIResult,
         FFIResultKind,
-        Handle,
+        HandleMut,
         Out,
         Ref,
         RustlsClientConfigHandle,
@@ -60,7 +60,7 @@ ffi! {
         let endpoint_config = Arc::new(EndpointConfig::default());
 
         let mut endpoint = None;
-        let _ = handle.mut_access(&mut |server_config| {
+        let _ = handle.ref_access(&mut |server_config| {
            endpoint = Some(Endpoint::new(endpoint_config.clone(), Some(Arc::from(server_config.clone()))));
            Ok(())
         });
@@ -70,13 +70,17 @@ ffi! {
 
         let mut endpoint_handle = EndpointHandle::new(endpoint);
 
-        let (poller, poll_notifier) = EndpointPoller::new(endpoint_handle.clone());
-        poller.start_polling();
+        let mut result = FFIResult::ok();
 
-        let result = endpoint_handle.mut_access(&mut move |endpoint| {
-            endpoint.set_poll_notifier(poll_notifier.clone());
-            Ok(())
-        }).into();
+        if cfg!(feature="auto-poll") {
+            let (poller, poll_notifier) = EndpointPoller::new(endpoint_handle.clone());
+            poller.start_polling();
+
+            result = endpoint_handle.mut_access(&mut move |endpoint| {
+                endpoint.set_poll_notifier(poll_notifier.clone());
+                Ok(())
+            }).into();
+        }
 
         unsafe {
             out_endpoint_id.init(endpoint_id);
@@ -99,7 +103,7 @@ ffi! {
         let mut proto_endpoint = Endpoint::new(endpoint_config, None);
         let mut endpoint = EndpointImpl::new(proto_endpoint);
 
-        let _ = handle.mut_access(&mut |client_config| {
+        let _ = handle.ref_access(&mut |client_config| {
           endpoint.set_default_client_config(client_config.clone());
            Ok(())
         });
@@ -176,7 +180,7 @@ ffi! {
                     endpoint.poll()?;
 
                     connection_handle.mut_access(&mut |lock| {
-                        lock.mark_pollable()?;
+                        lock.poll()?;
                         Ok(())
                     })?;
 
@@ -195,6 +199,36 @@ ffi! {
             Ok(())
         }).into()
     }
+
+     /// - Make sure to free all connection handles of connections from this endpoint.
+    fn poll_endpoint(handle: EndpointHandle) -> FFIResult {
+        handle.mut_access(&mut |endpoint| {
+            endpoint.poll();
+            Ok(())
+        }).into()
+    }
+
+    /// Frees the endpoint memory.
+    ///
+    /// - Make sure there are no references alive to this endpoint.
+    /// - Make sure all connections are properly closed before calling this method.
+    /// - Make sure to free all connection handles of connections from this endpoint.
+    fn free_endpoint(handle: EndpointHandle) -> FFIResult {
+        let result = handle.mut_access(&mut |endpoint| {
+            endpoint.close();
+            Ok(())
+        }).into();
+
+        if let Err(e) = result {
+            return FFIResult::err();
+        }
+
+        unsafe { EndpointHandle::dealloc(handle, |_e| {
+
+        })};
+
+        FFIResult::ok()
+    }
 }
 
 ffi! {
@@ -206,6 +240,65 @@ ffi! {
         let a = connection.poll();
         a
       }).into()
+    }
+
+    /// Close the connection immediately.
+    ///
+    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. Delivery
+    /// of data on unfinished streams is not guaranteed, so the application must call this only
+    /// when all important communications have been completed, e.g. by calling [`finish`] on
+    /// outstanding [`SendStream`]s and waiting for the resulting futures to complete.
+    ///
+    /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
+    ///
+    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
+    /// is preserved in full, it should be kept under 1KiB.
+    ///
+    /// [`ConnectionError::LocallyClosed`]: crate::ConnectionError::LocallyClosed
+    /// [`finish`]: crate::SendStream::finish
+    /// [`SendStream`]: crate::SendStream
+    fn close_connection(handle: ConnectionHandle, reason: Ref<u8>, reason_lenght: u32, error_code: u64) -> FFIResult {
+        let reason_bytes = unsafe { reason.as_bytes(reason_lenght as usize) };
+
+       handle.mut_access(&mut |connection| {
+            connection.close(VarInt::from_u64(error_code).unwrap(), reason_bytes);
+            Ok(())
+       }).into()
+    }
+
+    /// Frees the connection memory.
+    ///
+    /// - Make sure this handle is valid for the duration of the call.
+    /// - Make sure this handle will not be used after this call.
+    fn free_connection(endpoint: EndpointHandle, handle: ConnectionHandle) -> FFIResult {
+        let result = endpoint.mut_access(&mut |endpoint| {
+            handle.ref_access(&mut |connection| {
+               endpoint.remove_connection(connection.connection_handle);
+               Ok(())
+            });
+            Ok(())
+        });
+
+        if let Err(_e) = result {
+            return FFIResult::err().context(_e);
+        }
+
+        unsafe {
+            ConnectionHandle::dealloc(handle, |_t| {
+                Ok(())
+            }).into()
+        }
+    }
+
+    /// Frees the connection memory.
+    ///
+    /// - Make sure this handle is valid for the duration of the call.
+    /// - Make sure this handle will not be used after this call.
+    fn finish_stream(handle: ConnectionHandle, stream_id: u64) -> FFIResult {
+       handle.mut_access(&mut |connection| {
+            connection.inner.send_stream(StreamId(stream_id)).finish();
+            Ok(())
+       }).into()
     }
 }
 
@@ -220,7 +313,9 @@ ffi! {
    fn last_error(error_buf: Out<u8>, error_buf_len: size_t, actual_error_buf_len: Out<size_t>) -> FFIResult {
         FFIResult::from_last_result(|last_result| {
             if let Some(error_msg) = last_result {
-                let error_msg = error_msg.to_string();
+                tracing::warn!("{:?}", error_msg);
+
+                let error_msg = format!("{}", error_msg);
                 let error_as_bytes = error_msg.as_bytes();
 
                 // "The out pointer is valid and not mutably aliased elsewhere"
@@ -517,7 +612,10 @@ pub mod callbacks {
     };
     use libc::size_t;
     use quinn_proto::VarInt;
-    use tracing::trace;
+    use tracing::{
+        trace,
+        warn,
+    };
 
     /// Generates FFI methods to set callbacks and declares the static variable to store that callback.
     #[doc(hidden)]
@@ -577,6 +675,8 @@ pub mod callbacks {
 
         invoke ON_CONNECTION_LOST with on_connection_lost(con: u32)
 
+        invoke ON_CONNECTION_CLOSE with on_connection_close(con: u32, code: u64, reason: *const u8, leng: u32)
+
         invoke ON_STREAM_AVAILABLE with on_stream_available(con: u32, dir: u8)
 
         invoke ON_DATAGRAM_RECEIVED with on_datagram_received(con: u32)
@@ -615,6 +715,8 @@ pub mod callbacks {
         fn set_on_connected(u32) set ON_CONNECTED
 
         fn set_on_connection_lost(u32) set ON_CONNECTION_LOST
+
+        fn set_on_connection_close(u32, u64, *const u8, u32) set ON_CONNECTION_CLOSE
 
         fn set_on_stream_writable(u32, u64, u8) set ON_STREAM_WRITABLE
 

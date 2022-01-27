@@ -67,9 +67,10 @@ impl FFIResult {
 
     /// Sets the `LAST_RESULT` context to the given `QuinnError`.
     pub fn context(self, e: FFIErrorKind) -> Self {
+        tracing::error!("with context {:?}", e);
         LAST_RESULT.with(|last_result| {
             let result = LastResult { err: Some(e) };
-            *last_result.borrow_mut() = Some(result);
+            last_result.replace(Some(result));
         });
 
         self
@@ -88,6 +89,8 @@ impl FFIResult {
                 }
             }
 
+            tracing::error!("NONE {:?}", last_result);
+
             return f(message);
         })
     }
@@ -99,29 +102,8 @@ impl FFIResult {
                 *last_result.borrow_mut() = None;
             }
             return match catch_unwind(f) {
-                Ok(result) => {
-                    if result.is_err() {
-                        let error = FFIErrorKind::IoError(io::Error::new(
-                            io::ErrorKind::Other,
-                            result.to_string(),
-                        ));
-
-                        // Always set the last result so it matches what's returned.
-                        // This `Ok` branch doesn't necessarily mean the result is ok,
-                        // only that there wasn't a panic.
-                        let mut ref_mut = last_result.borrow_mut();
-
-                        ref_mut.as_mut().map(|a| {
-                            *a = LastResult { err: Some(error) };
-                        });
-                        println!("result");
-                        return result;
-                    }
-
-                    FFIResult::ok()
-                }
+                Ok(result) => result,
                 Err(e) => {
-                    println!("err");
                     let extract_panic =
                         || extract_panic(&e).map(|s| format!("internal panic with '{}'", s));
 
