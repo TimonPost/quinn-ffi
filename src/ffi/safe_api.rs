@@ -12,9 +12,9 @@ use crate::proto_impl::{
 
 use crate::ffi::{
     handle_mut::FFIHandleMut,
-    HandleMut,
-    HandleRef,
+    HandleMut
 };
+
 use std::sync::{
     Arc,
     Mutex,
@@ -85,7 +85,7 @@ impl<'a> HandleMut for EndpointHandle<'a> {
         &self,
         cb: &mut dyn FnMut(&Self::Inner) -> Result<(), FFIErrorKind>,
     ) -> Result<(), FFIErrorKind> {
-        let mut lock = self.lock().unwrap();
+        let lock = self.lock().unwrap();
         cb(&lock)
     }
 
@@ -131,7 +131,7 @@ impl<'a> HandleMut for ConnectionHandle<'a> {
         Self::alloc(Arc::new(Mutex::new(instance)))
     }
 }
-use tracing::warn;
+
 
 /**
 Wrap an FFI function.

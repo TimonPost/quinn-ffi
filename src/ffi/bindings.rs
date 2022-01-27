@@ -219,7 +219,7 @@ ffi! {
             Ok(())
         }).into();
 
-        if let Err(e) = result {
+        if let Err(_e) = result {
             return FFIResult::err();
         }
 
@@ -614,7 +614,6 @@ pub mod callbacks {
     use quinn_proto::VarInt;
     use tracing::{
         trace,
-        warn,
     };
 
     /// Generates FFI methods to set callbacks and declares the static variable to store that callback.

@@ -9,7 +9,6 @@ use std::{
         Display,
         Formatter,
     },
-    io,
     panic::{
         catch_unwind,
         UnwindSafe,
