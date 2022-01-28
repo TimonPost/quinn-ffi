@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["Error","rustls reports protocol errors using this type."]],"struct":[["HandshakeData","Authentication data for (rustls) TLS session"],["TlsSession","A rustls TLS session"]]});

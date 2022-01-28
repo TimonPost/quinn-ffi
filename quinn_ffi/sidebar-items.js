@@ -1,0 +1,1 @@
+initSidebarItems({"mod":[["ffi","FFI layer that exposes functions and types for interacting with Quinn."],["proto_impl","Quinn-proto implementation, similar to `quinn` but without the async runtime and some differences to make it fit with FFi applications."]]});

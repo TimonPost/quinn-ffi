@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["ClientConfig","Configuration for outgoing connections"]]});

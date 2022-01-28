@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["Error","Errors encountered while decoding `TransportParameters`"]],"struct":[["TransportParameters","Transport parameters used to negotiate connection-level preferences between peers"]]});
