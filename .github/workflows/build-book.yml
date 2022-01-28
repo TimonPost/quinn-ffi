@@ -12,15 +12,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
-    runs-on: ubuntu-20.04
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-    steps:
-      - uses: actions/checkout@v2
-  check:
+  build:
     name: Rust project
     runs-on: ubuntu-latest
+    
     steps:
       - uses: actions/checkout@v2
       - name: Install latest nightly
@@ -28,14 +23,15 @@ jobs:
         with:
             toolchain: nightly
             override: true
-            components: rustfmt, clippy
-      - name: Run cargo check
+      - name: Cargo Doc
         uses: actions-rs/cargo@v1
         with:
-          command: doc         
+          command: doc 
+      - name: Cargo Doc
+        run: ls ./target/doc
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         if: ${{ github.ref == 'refs/heads/main' }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .\target\doc\
+          publish_dir: ./target/doc/
