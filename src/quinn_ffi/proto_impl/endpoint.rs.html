@@ -329,6 +329,7 @@
 <span id="324">324</span>
 <span id="325">325</span>
 <span id="326">326</span>
+<span id="327">327</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">ffi::callbacks</span>,
     <span class="ident">proto</span>,
@@ -604,6 +605,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">self</span>.<span class="ident">add_connection</span>(<span class="ident">ch</span>, <span class="ident">conn</span>))
     }
 
+    <span class="doccomment">/// Closes the endpoint.</span>
     <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">close</span>(<span class="kw-2">&amp;mut</span> <span class="self">self</span>) {
         <span class="self">self</span>.<span class="ident">endpoint_poll_notifier</span>.<span class="ident">as_ref</span>().<span class="ident">map</span>(<span class="op">|</span><span class="ident">val</span><span class="op">|</span> {
             <span class="ident">val</span>.<span class="ident">send</span>(<span class="op">-</span><span class="number">1</span>);
@@ -656,5 +658,5 @@
     }
 }
 </code></pre></div>
-</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (21b4a9cfd 2022-01-27)" ></div>
+</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (e0a55f449 2022-01-28)" ></div>
 </body></html>

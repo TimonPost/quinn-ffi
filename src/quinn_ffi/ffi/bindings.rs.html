@@ -741,6 +741,8 @@
 <span id="736">736</span>
 <span id="737">737</span>
 <span id="738">738</span>
+<span id="739">739</span>
+<span id="740">740</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">ffi</span>::{
         <span class="ident">ConnectionHandle</span>,
@@ -943,7 +945,7 @@
         }).<span class="ident">into</span>()
     }
 
-     <span class="doccomment">/// - Make sure to free all connection handles of connections from this endpoint.</span>
+     <span class="doccomment">/// Polls the endpoint.</span>
     <span class="kw">fn</span> <span class="ident">poll_endpoint</span>(<span class="ident">handle</span>: <span class="ident">EndpointHandle</span>) -&gt; <span class="ident">FFIResult</span> {
         <span class="ident">handle</span>.<span class="ident">mut_access</span>(<span class="kw-2">&amp;mut</span> <span class="op">|</span><span class="ident">endpoint</span><span class="op">|</span> {
             <span class="ident">endpoint</span>.<span class="ident">poll</span>();
@@ -951,12 +953,12 @@
         }).<span class="ident">into</span>()
     }
 
-    <span class="doccomment">/// Frees the endpoint memory.</span>
+    <span class="doccomment">/// Closes the endpoint, and frees the endpoint memory.</span>
     <span class="doccomment">///</span>
     <span class="doccomment">/// - Make sure there are no references alive to this endpoint.</span>
     <span class="doccomment">/// - Make sure all connections are properly closed before calling this method.</span>
     <span class="doccomment">/// - Make sure to free all connection handles of connections from this endpoint.</span>
-    <span class="kw">fn</span> <span class="ident">free_endpoint</span>(<span class="ident">handle</span>: <span class="ident">EndpointHandle</span>) -&gt; <span class="ident">FFIResult</span> {
+    <span class="kw">fn</span> <span class="ident">dispose_endpoint</span>(<span class="ident">handle</span>: <span class="ident">EndpointHandle</span>) -&gt; <span class="ident">FFIResult</span> {
         <span class="kw">let</span> <span class="ident">result</span> <span class="op">=</span> <span class="ident">handle</span>.<span class="ident">mut_access</span>(<span class="kw-2">&amp;mut</span> <span class="op">|</span><span class="ident">endpoint</span><span class="op">|</span> {
             <span class="ident">endpoint</span>.<span class="ident">close</span>();
             <span class="prelude-val">Ok</span>(())
@@ -966,9 +968,7 @@
             <span class="kw">return</span> <span class="ident">FFIResult::err</span>();
         }
 
-        <span class="kw">unsafe</span> { <span class="ident">EndpointHandle::dealloc</span>(<span class="ident">handle</span>, <span class="op">|</span><span class="ident">_e</span><span class="op">|</span> {
-
-        })};
+        <span class="kw">unsafe</span> { <span class="ident">EndpointHandle::dealloc</span>(<span class="ident">handle</span>, <span class="op">|</span><span class="ident">_e</span><span class="op">|</span> {})};
 
         <span class="ident">FFIResult::ok</span>()
     }
@@ -1246,6 +1246,16 @@
 
         <span class="ident">FFIResult::ok</span>()
     }
+
+    <span class="kw">fn</span> <span class="ident">free_client_config</span>(<span class="ident">handle</span>: <span class="ident">RustlsClientConfigHandle</span>) -&gt; <span class="ident">FFIResult</span> {
+        <span class="kw">unsafe</span> { <span class="ident">RustlsClientConfigHandle::dealloc</span>(<span class="ident">handle</span>, <span class="op">|</span><span class="ident">_e</span><span class="op">|</span> {})};
+        <span class="ident">FFIResult::ok</span>()
+    }
+
+    <span class="kw">fn</span> <span class="ident">free_server_config</span>(<span class="ident">handle</span>: <span class="ident">RustlsServerConfigHandle</span>) -&gt; <span class="ident">FFIResult</span> {
+        <span class="kw">unsafe</span> { <span class="ident">RustlsServerConfigHandle::dealloc</span>(<span class="ident">handle</span>, <span class="op">|</span><span class="ident">_e</span><span class="op">|</span> {})};
+        <span class="ident">FFIResult::ok</span>()
+    }
 }
 
 <span class="kw">unsafe</span> <span class="kw">fn</span> <span class="ident">decode_cert_key_store</span>(
@@ -1355,9 +1365,7 @@
     };
     <span class="kw">use</span> <span class="ident">libc::size_t</span>;
     <span class="kw">use</span> <span class="ident">quinn_proto::VarInt</span>;
-    <span class="kw">use</span> <span class="ident">tracing</span>::{
-        <span class="ident">trace</span>,
-    };
+    <span class="kw">use</span> <span class="ident">tracing::trace</span>;
 
     <span class="doccomment">/// Generates FFI methods to set callbacks and declares the static variable to store that callback.</span>
     <span class="attribute">#[<span class="ident">doc</span>(<span class="ident">hidden</span>)]</span>
@@ -1415,9 +1423,7 @@
 
         <span class="ident">invoke</span> <span class="ident">ON_CONNECTED</span> <span class="ident">with</span> <span class="ident">on_connected</span>(<span class="ident">con</span>: <span class="ident">u32</span>)
 
-        <span class="ident">invoke</span> <span class="ident">ON_CONNECTION_LOST</span> <span class="ident">with</span> <span class="ident">on_connection_lost</span>(<span class="ident">con</span>: <span class="ident">u32</span>)
-
-        <span class="ident">invoke</span> <span class="ident">ON_CONNECTION_CLOSE</span> <span class="ident">with</span> <span class="ident">on_connection_close</span>(<span class="ident">con</span>: <span class="ident">u32</span>, <span class="ident">code</span>: <span class="ident">u64</span>, <span class="ident">reason</span>: <span class="kw-2">*const</span> <span class="ident">u8</span>, <span class="ident">leng</span>: <span class="ident">u32</span>)
+        <span class="ident">invoke</span> <span class="ident">ON_CONNECTION_LOST</span> <span class="ident">with</span> <span class="ident">on_connection_lost</span>(<span class="ident">con</span>: <span class="ident">u32</span>,<span class="ident">reason</span>: <span class="kw-2">*const</span> <span class="ident">u8</span>, <span class="ident">len</span>: <span class="ident">u32</span>)
 
         <span class="ident">invoke</span> <span class="ident">ON_STREAM_AVAILABLE</span> <span class="ident">with</span> <span class="ident">on_stream_available</span>(<span class="ident">con</span>: <span class="ident">u32</span>, <span class="ident">dir</span>: <span class="ident">u8</span>)
 
@@ -1456,9 +1462,7 @@
 
         <span class="kw">fn</span> <span class="ident">set_on_connected</span>(<span class="ident">u32</span>) <span class="ident">set</span> <span class="ident">ON_CONNECTED</span>
 
-        <span class="kw">fn</span> <span class="ident">set_on_connection_lost</span>(<span class="ident">u32</span>) <span class="ident">set</span> <span class="ident">ON_CONNECTION_LOST</span>
-
-        <span class="kw">fn</span> <span class="ident">set_on_connection_close</span>(<span class="ident">u32</span>, <span class="ident">u64</span>, <span class="kw-2">*const</span> <span class="ident">u8</span>, <span class="ident">u32</span>) <span class="ident">set</span> <span class="ident">ON_CONNECTION_CLOSE</span>
+        <span class="kw">fn</span> <span class="ident">set_on_connection_lost</span>(<span class="ident">u32</span>, <span class="kw-2">*const</span> <span class="ident">u8</span>, <span class="ident">u32</span>) <span class="ident">set</span> <span class="ident">ON_CONNECTION_LOST</span>
 
         <span class="kw">fn</span> <span class="ident">set_on_stream_writable</span>(<span class="ident">u32</span>, <span class="ident">u64</span>, <span class="ident">u8</span>) <span class="ident">set</span> <span class="ident">ON_STREAM_WRITABLE</span>
 
@@ -1480,5 +1484,5 @@
     }
 }
 </code></pre></div>
-</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (21b4a9cfd 2022-01-27)" ></div>
+</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (e0a55f449 2022-01-28)" ></div>
 </body></html>

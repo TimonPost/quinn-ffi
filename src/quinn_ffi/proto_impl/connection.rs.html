@@ -219,6 +219,9 @@
 <span id="214">214</span>
 <span id="215">215</span>
 <span id="216">216</span>
+<span id="217">217</span>
+<span id="218">218</span>
+<span id="219">219</span>
 </pre><pre class="rust"><code><span class="kw">use</span> <span class="kw">crate</span>::{
     <span class="ident">ffi::callbacks</span>,
     <span class="ident">proto</span>,
@@ -371,12 +374,7 @@
         <span class="kw">let</span> <span class="ident">event</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">connection_events</span>.<span class="ident">try_recv</span>()<span class="question-mark">?</span>;
 
         <span class="kw">match</span> <span class="ident">event</span> {
-            <span class="ident">ConnectionEvent::Close</span> { <span class="ident">error_code</span>, <span class="ident">reason</span> } =&gt; <span class="ident">callbacks::on_connection_close</span>(
-                <span class="self">self</span>.<span class="ident">connection_id</span>(),
-                <span class="ident">error_code</span>.<span class="ident">into_inner</span>(),
-                <span class="ident">reason</span>.<span class="ident">as_ptr</span>(),
-                <span class="ident">reason</span>.<span class="ident">len</span>() <span class="kw">as</span> <span class="ident">u32</span>,
-            ),
+            <span class="ident">ConnectionEvent::Close</span> { <span class="ident">error_code</span>, <span class="ident">reason</span> } =&gt; {}
             <span class="ident">ConnectionEvent::Proto</span>(<span class="ident">proto</span>) =&gt; {
                 <span class="self">self</span>.<span class="ident">inner</span>.<span class="ident">handle_event</span>(<span class="ident">proto</span>);
             }
@@ -396,9 +394,17 @@
                     <span class="comment">// ignore for now</span>
                 }
                 <span class="ident">Connected</span> =&gt; <span class="ident">callbacks::on_connected</span>(<span class="self">self</span>.<span class="ident">connection_id</span>()),
-                <span class="ident">ConnectionLost</span> { <span class="ident">reason</span>: <span class="kw">_</span> } =&gt; {
+                <span class="ident">ConnectionLost</span> { <span class="ident">reason</span> } =&gt; {
                     <span class="comment">// TODO: self.terminate(reason);</span>
-                    <span class="ident">callbacks::on_connection_lost</span>(<span class="self">self</span>.<span class="ident">connection_id</span>())
+
+                    <span class="kw">let</span> <span class="ident">reason</span> <span class="op">=</span> <span class="macro">format!</span>(<span class="string">&quot;{:?}&quot;</span>, <span class="ident">reason</span>);
+                    <span class="kw">let</span> <span class="ident">bytes</span> <span class="op">=</span> <span class="ident">reason</span>.<span class="ident">as_bytes</span>();
+
+                    <span class="ident">callbacks::on_connection_lost</span>(
+                        <span class="self">self</span>.<span class="ident">connection_id</span>(),
+                        <span class="ident">bytes</span>.<span class="ident">as_ptr</span>(),
+                        <span class="ident">bytes</span>.<span class="ident">len</span>() <span class="kw">as</span> <span class="ident">u32</span>,
+                    );
                 }
                 <span class="ident">Stream</span>(<span class="ident">StreamEvent::Writable</span> { <span class="ident">id</span> }) =&gt; {
                     <span class="ident">callbacks::on_stream_writable</span>(<span class="self">self</span>.<span class="ident">connection_id</span>(), <span class="ident">id</span>)
@@ -436,5 +442,5 @@
     }
 }
 </code></pre></div>
-</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (21b4a9cfd 2022-01-27)" ></div>
+</section><section id="search" class="content hidden"></section></div></main><div id="rustdoc-vars" data-root-path="../../../" data-current-crate="quinn_ffi" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.60.0-nightly (e0a55f449 2022-01-28)" ></div>
 </body></html>
