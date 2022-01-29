@@ -8,7 +8,7 @@
 
 # Quinn FFI build for C#
 
-**Provides a thin FFI over [Quinn][Quinn] mainly designed, but not restricted to, for being used in [DotQuic][DotQuic]**
+**Provides a thin FFI over [Quinn][Quinn]**
   
 </div>
 
