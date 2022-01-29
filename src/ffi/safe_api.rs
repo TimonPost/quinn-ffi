@@ -12,7 +12,7 @@ use crate::proto_impl::{
 
 use crate::ffi::{
     handle_mut::FFIHandleMut,
-    HandleMut
+    HandleMut,
 };
 
 use std::sync::{
@@ -131,7 +131,6 @@ impl<'a> HandleMut for ConnectionHandle<'a> {
         Self::alloc(Arc::new(Mutex::new(instance)))
     }
 }
-
 
 /**
 Wrap an FFI function.

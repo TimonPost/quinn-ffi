@@ -64,7 +64,7 @@ impl FFIResult {
         self.kind != FFIResultKind::Ok
     }
 
-    /// Sets the `LAST_RESULT` context to the given `QuinnError`.
+    /// Sets the `LAST_RESULT` context to the given `FFIErrorKind`.
     pub fn context(self, e: FFIErrorKind) -> Self {
         tracing::error!("with context {:?}", e);
         LAST_RESULT.with(|last_result| {

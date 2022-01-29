@@ -273,6 +273,7 @@ impl EndpointImpl {
         Ok(self.add_connection(ch, conn))
     }
 
+    /// Closes the endpoint.
     pub fn close(&mut self) {
         self.endpoint_poll_notifier.as_ref().map(|val| {
             val.send(-1);

@@ -52,7 +52,7 @@ where
 {
     type Target = T;
 
-    // "We own the interior value"
+    // We own the interior value
     fn deref(&self) -> &T {
         unsafe { &*self.0 }
     }

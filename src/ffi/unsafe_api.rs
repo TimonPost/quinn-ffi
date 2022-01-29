@@ -9,20 +9,23 @@ use crate::{
     },
 };
 
-use crate::ffi::HandleRef;
+use crate::ffi::{
+    handle_mut::FFIHandleMut,
+    HandleRef,
+};
 use std::sync::{
     Arc,
     Mutex,
 };
 
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type RustlsClientConfigHandle<'a> = HandleMut<'a, Mutex<quinn_proto::ClientConfig>>;
+pub type RustlsClientConfigHandle<'a> = FFIHandleMut<'a, Mutex<quinn_proto::ClientConfig>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type RustlsServerConfigHandle<'a> = HandleMut<'a, Mutex<quinn_proto::ServerConfig>>;
+pub type RustlsServerConfigHandle<'a> = FFIHandleMut<'a, Mutex<quinn_proto::ServerConfig>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type EndpointHandle<'a> = HandleMut<'a, Arc<Mutex<EndpointImpl>>>;
+pub type EndpointHandle<'a> = FFIHandleMut<'a, Arc<Mutex<EndpointImpl>>>;
 // Mutex required for unwind safeness due to possible interior mutability.
-pub type ConnectionHandle<'a> = HandleMut<'a, Arc<Mutex<ConnectionImpl>>>;
+pub type ConnectionHandle<'a> = FFIHandleMut<'a, Arc<Mutex<ConnectionImpl>>>;
 
 impl<'a> HandleMut for RustlsClientConfigHandle<'a> {
     type Inner = quinn_proto::ClientConfig;

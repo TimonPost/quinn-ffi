@@ -150,12 +150,7 @@ impl ConnectionImpl {
         let event = self.connection_events.try_recv()?;
 
         match event {
-            ConnectionEvent::Close { error_code, reason } => callbacks::on_connection_close(
-                self.connection_id(),
-                error_code.into_inner(),
-                reason.as_ptr(),
-                reason.len() as u32,
-            ),
+            ConnectionEvent::Close { error_code, reason } => {}
             ConnectionEvent::Proto(proto) => {
                 self.inner.handle_event(proto);
             }
@@ -175,9 +170,17 @@ impl ConnectionImpl {
                     // ignore for now
                 }
                 Connected => callbacks::on_connected(self.connection_id()),
-                ConnectionLost { reason: _ } => {
+                ConnectionLost { reason } => {
                     // TODO: self.terminate(reason);
-                    callbacks::on_connection_lost(self.connection_id())
+
+                    let reason = format!("{:?}", reason);
+                    let bytes = reason.as_bytes();
+
+                    callbacks::on_connection_lost(
+                        self.connection_id(),
+                        bytes.as_ptr(),
+                        bytes.len() as u32,
+                    );
                 }
                 Stream(StreamEvent::Writable { id }) => {
                     callbacks::on_stream_writable(self.connection_id(), id)

@@ -200,7 +200,7 @@ ffi! {
         }).into()
     }
 
-     /// - Make sure to free all connection handles of connections from this endpoint.
+     /// Polls the endpoint.
     fn poll_endpoint(handle: EndpointHandle) -> FFIResult {
         handle.mut_access(&mut |endpoint| {
             endpoint.poll();
@@ -208,12 +208,12 @@ ffi! {
         }).into()
     }
 
-    /// Frees the endpoint memory.
+    /// Closes the endpoint, and frees the endpoint memory.
     ///
     /// - Make sure there are no references alive to this endpoint.
     /// - Make sure all connections are properly closed before calling this method.
     /// - Make sure to free all connection handles of connections from this endpoint.
-    fn free_endpoint(handle: EndpointHandle) -> FFIResult {
+    fn dispose_endpoint(handle: EndpointHandle) -> FFIResult {
         let result = handle.mut_access(&mut |endpoint| {
             endpoint.close();
             Ok(())
@@ -223,9 +223,7 @@ ffi! {
             return FFIResult::err();
         }
 
-        unsafe { EndpointHandle::dealloc(handle, |_e| {
-
-        })};
+        unsafe { EndpointHandle::dealloc(handle, |_e| {})};
 
         FFIResult::ok()
     }
@@ -503,6 +501,16 @@ ffi! {
 
         FFIResult::ok()
     }
+
+    fn free_client_config(handle: RustlsClientConfigHandle) -> FFIResult {
+        unsafe { RustlsClientConfigHandle::dealloc(handle, |_e| {})};
+        FFIResult::ok()
+    }
+
+    fn free_server_config(handle: RustlsServerConfigHandle) -> FFIResult {
+        unsafe { RustlsServerConfigHandle::dealloc(handle, |_e| {})};
+        FFIResult::ok()
+    }
 }
 
 unsafe fn decode_cert_key_store(
@@ -612,9 +620,7 @@ pub mod callbacks {
     };
     use libc::size_t;
     use quinn_proto::VarInt;
-    use tracing::{
-        trace,
-    };
+    use tracing::trace;
 
     /// Generates FFI methods to set callbacks and declares the static variable to store that callback.
     #[doc(hidden)]
@@ -672,9 +678,7 @@ pub mod callbacks {
 
         invoke ON_CONNECTED with on_connected(con: u32)
 
-        invoke ON_CONNECTION_LOST with on_connection_lost(con: u32)
-
-        invoke ON_CONNECTION_CLOSE with on_connection_close(con: u32, code: u64, reason: *const u8, leng: u32)
+        invoke ON_CONNECTION_LOST with on_connection_lost(con: u32,reason: *const u8, len: u32)
 
         invoke ON_STREAM_AVAILABLE with on_stream_available(con: u32, dir: u8)
 
@@ -713,9 +717,7 @@ pub mod callbacks {
 
         fn set_on_connected(u32) set ON_CONNECTED
 
-        fn set_on_connection_lost(u32) set ON_CONNECTION_LOST
-
-        fn set_on_connection_close(u32, u64, *const u8, u32) set ON_CONNECTION_CLOSE
+        fn set_on_connection_lost(u32, *const u8, u32) set ON_CONNECTION_LOST
 
         fn set_on_stream_writable(u32, u64, u8) set ON_STREAM_WRITABLE
 
