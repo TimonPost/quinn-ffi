@@ -1,8 +1,6 @@
 name: Bump version, create new tag and release point
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 jobs:
   bump_version:
     name: Bump version, create tag/release point
