@@ -6,9 +6,9 @@
 
 <div align="center">
 
-# `Quinn FFI build for C#`
+# Quinn FFI build for C#
 
-**Provides a thin FFI over [Quinn][Quinn] mainly designed for being used in [DotQuic][DotQuic]**
+**Provides a thin FFI over [Quinn][Quinn] mainly designed, but not restricted to, for being used in [DotQuic][DotQuic]**
   
 </div>
 
@@ -20,33 +20,21 @@ The FFI is inherently unsafe between the two and therefore the right care has to
 This library implements various ideas from this [blog][blog] which is quite a popular reference to build FFI for rust and C#.  
 
 ### Handles
-This library tries to minimize insecurity by introducing `Handle<T>`. A `Handle` is a wrapper of a pointer allocated on the heap. This `Handle` is bound by Rust safety rules. Because of those rules the calling application is prevented from abusing rust its rules. This is especially the case of C# were shared write/read access is not uncommon. 
+This library tries to minimize insecurity by introducing `Handle<T>`. 
+A `Handle` is a wrapper of a pointer allocated on the heap. This `Handle` is bound by Rust safety rules. 
+Because of those rules the calling application is prevented from abusing rust its rules. 
+This is especially the case of C# were shared write/read access is not uncommon. 
 
-For now, there are two types of Handles: `HandleSync` which accepts only `Send + Sync` and wraps a mutable pointer, and `HandleShared`, which accepts only immutable pointers and automatically implements `Send + Sync` because the pointer cannot be mutated and therefore safe to share between threads. 
+For now, there are two types of Handles: `HandleMut` which accepts only `Send + Sync` and wraps a mutable pointer, and `HandleRef`, which accepts only immutable pointers to types that are `Send + Sync`.
+This library defers from the blogpost who uses thread locals for synchronisation safety, however such handles could be added in the future.   
 
-```rust 
-pub struct HandleSync<'a, T>(*mut T, PhantomData<&'a T>)
-where
-    T: ?Sized;
-
-pub type ConnectionHandle<'a> = HandleSync<'a, Arc<Mutex<ConnectionImpl>>>;
-
-// Rust
-unsafe extern "cdecl" fn read_stream(handle: ConnectionHandle);
-// C#
-[DllImport]
-internal static extern QuinnResult read_stream(ConnectionSafeHandle handle);
-read_stream(MyCreatedHandle)
-```
 In C#, `ConnectionSafeHandle` is a [SafeHandle][SafeHandle] which wraps a pointer.
 A `Safe Handle` in C# and `Handle` in Rust are both pointers wrapped by some type.
 Any pointer given to a particular `external` function ought to be pointing to memory of a particular `Handle` type.
 
-There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an imutable and mutable pointer to a resource allocated by C#. 
+There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an immutable and mutable pointer to a resource allocated by C#. 
 Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. 
 This allows us to work with the C# `out` were the called function initializes the calling function its state. 
-
-There are several other types that implement similar semantics: `Ref`, `RefMut` which are respectively an immutable and mutable pointer to a resource allocated by C#. Finally, there is `Out` which points to allocated memory in C# with the intention of initializing it in Rust. This allows us to work with the C# `out` were the called function initializes the calling function its state.
 
 ### [Callbacks][callbacks]
 
@@ -54,20 +42,6 @@ Invoking Rust with C# comes at some cost due to `PInvoke` function. It is seen a
 
 The client application `MUST` provide a callback for each function before the application starts running. [DotQuic][DotQuic] implements events for the given callbacks and enables different listeners for those events. And these listeners can in turn perform API actions. Be careful about calling FFI within the event handlers, as this can result in deadlocks since the callbacks are invoked in rust that probably locks some handle. 
 
-### Functions
-Furthermore those are the [functions][functions] that are supported now: 
-```
-accept_stream
-connect_client
-create_client_endpoint
-create_server_endpoint
-handle_datagram	
-last_error
-open_stream	
-poll_connection	
-read_stream
-write_stream
-```
 
 ### Safety
 
